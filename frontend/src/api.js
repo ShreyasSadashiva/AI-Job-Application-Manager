@@ -3,7 +3,7 @@
  * All endpoints are under /api/*
  */
 
-const BASE = "";
+const BASE = import.meta.env.VITE_API_URL || "";
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {

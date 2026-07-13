@@ -1,3 +1,6 @@
+# ── Deployment guide (keep local only) ─────────────────────────
+DEPLOY.md
+
 # ── Environment ────────────────────────────────────────────────
 backend/.env
 .env

@@ -14,21 +14,23 @@ function ScoreRing({ score }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-      <svg width={132} height={132} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={66} cy={66} r={radius} fill="none" stroke="var(--surface3)" strokeWidth={10} />
-        <circle
-          cx={66} cy={66} r={radius} fill="none"
-          stroke={color} strokeWidth={10}
-          strokeDasharray={`${filled} ${circumference}`}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dasharray 0.6s ease" }}
-        />
-      </svg>
-      <div style={{ position: "absolute", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ fontSize: score == null ? 32 : 36, fontWeight: 700, color, letterSpacing: -1 }}>
-          {score == null ? "—" : score}
+      <div style={{ position: "relative", width: 132, height: 132 }}>
+        <svg width={132} height={132} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={66} cy={66} r={radius} fill="none" stroke="var(--surface3)" strokeWidth={10} />
+          <circle
+            cx={66} cy={66} r={radius} fill="none"
+            stroke={color} strokeWidth={10}
+            strokeDasharray={`${filled} ${circumference}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dasharray 0.6s ease" }}
+          />
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ fontSize: score == null ? 32 : 36, fontWeight: 700, color, letterSpacing: -1 }}>
+            {score == null ? "—" : score}
+          </div>
+          {score != null && <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>/ 100</div>}
         </div>
-        {score != null && <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>/ 100</div>}
       </div>
       <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>{label}</div>
     </div>
@@ -79,7 +81,7 @@ function DropZone({ file, onFile, onClear }) {
             </div>
           </div>
           <button
-            onClick={(e) => { e.stopPropagation(); onClear(); }}
+            onClick={(e) => { e.stopPropagation(); inputRef.current.value = ""; onClear(); }}
             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", marginLeft: 4 }}
           >
             <X size={14} />
@@ -97,7 +99,6 @@ function DropZone({ file, onFile, onClear }) {
 }
 
 function JobCard({ job, selected, onClick }) {
-  const hasJd = Boolean(job.jd_text?.trim());
   return (
     <div
       onClick={onClick}
@@ -121,14 +122,7 @@ function JobCard({ job, selected, onClick }) {
           {job.position}
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-        {!hasJd && (
-          <span style={{ fontSize: 10, color: "var(--warning)", background: "var(--warning-dim)", padding: "1px 5px", borderRadius: 3, fontWeight: 600 }}>
-            NO JD
-          </span>
-        )}
-        {selected && <CheckCircle size={14} style={{ color: "var(--red)" }} />}
-      </div>
+      {selected && <CheckCircle size={14} style={{ color: "var(--red)", flexShrink: 0 }} />}
     </div>
   );
 }
@@ -162,9 +156,20 @@ export default function ATSPage() {
     return !q || j.company_name?.toLowerCase().includes(q) || j.position?.toLowerCase().includes(q);
   });
 
-  function selectJob(job) {
-    setSelectedJob((prev) => prev?.id === job.id ? null : job);
+  async function selectJob(job) {
+    if (selectedJob?.id === job.id) {
+      setSelectedJob(null);
+      setResult(null);
+      return;
+    }
     setResult(null);
+    // List view omits jd_text — fetch the full record so we have it for scoring
+    try {
+      const full = await api.getJob(job.id);
+      setSelectedJob(full);
+    } catch {
+      setSelectedJob(job);
+    }
   }
 
   async function runScore() {
@@ -198,53 +203,51 @@ export default function ATSPage() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
 
         {/* Left — job selector */}
-        <div>
-          <div className="card" style={{ padding: 16 }}>
-            <div className="card-title" style={{ marginBottom: 12 }}>1. Select a Job</div>
-            <div className="search-wrap" style={{ maxWidth: "100%", marginBottom: 12 }}>
-              <Search size={14} />
-              <input
-                className="search-input"
-                placeholder="Search company or position..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 380, overflowY: "auto" }}>
-              {loadingJobs ? (
-                <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
-                  <div className="spinner" style={{ margin: "0 auto 8px" }} />
-                  Loading jobs...
-                </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)", fontSize: 13 }}>
-                  No jobs found
-                </div>
-              ) : (
-                filtered.map((job) => (
-                  <JobCard
-                    key={job.id}
-                    job={job}
-                    selected={selectedJob?.id === job.id}
-                    onClick={() => selectJob(job)}
-                  />
-                ))
-              )}
-            </div>
-            {selectedJob && (
-              <div style={{ marginTop: 12, padding: "8px 12px", background: "var(--surface3)", borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--text-secondary)" }}>
-                Selected: <strong style={{ color: "var(--text)" }}>{selectedJob.company_name} — {selectedJob.position}</strong>
-                {!selectedJob.jd_text?.trim() && (
-                  <div style={{ marginTop: 4, color: "var(--warning)", display: "flex", alignItems: "center", gap: 4 }}>
-                    <AlertCircle size={11} /> No JD stored for this job — score unavailable
-                  </div>
-                )}
+        <div className="card" style={{ padding: 16 }}>
+          <div className="card-title" style={{ marginBottom: 12 }}>1. Select a Job</div>
+          <div className="search-wrap" style={{ maxWidth: "100%", marginBottom: 12 }}>
+            <Search size={14} />
+            <input
+              className="search-input"
+              placeholder="Search company or position..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 380, overflowY: "auto" }}>
+            {loadingJobs ? (
+              <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                <div className="spinner" style={{ margin: "0 auto 8px" }} />
+                Loading jobs...
               </div>
+            ) : filtered.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 32, color: "var(--text-muted)", fontSize: 13 }}>
+                No jobs found
+              </div>
+            ) : (
+              filtered.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  selected={selectedJob?.id === job.id}
+                  onClick={() => selectJob(job)}
+                />
+              ))
             )}
           </div>
+          {selectedJob && (
+            <div style={{ marginTop: 12, padding: "8px 12px", background: "var(--surface3)", borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--text-secondary)" }}>
+              Selected: <strong style={{ color: "var(--text)" }}>{selectedJob.company_name} — {selectedJob.position}</strong>
+              {!selectedJob.jd_text?.trim() && (
+                <div style={{ marginTop: 4, color: "var(--warning)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <AlertCircle size={11} /> No JD stored for this job — score unavailable
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right — upload + result */}
+        {/* Right — upload + run button */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="card" style={{ padding: 16 }}>
             <div className="card-title" style={{ marginBottom: 12 }}>2. Upload Resume PDF</div>
@@ -259,44 +262,75 @@ export default function ATSPage() {
           >
             {scoring ? <><span className="spinner" style={{ borderTopColor: "#fff" }} /> Scoring...</> : "Run Semantic ATS Score"}
           </button>
-
-          {result && (
-            <div className="card" style={{ padding: 24 }}>
-              <div className="card-title" style={{ marginBottom: 20, textAlign: "center" }}>Semantic Match Result</div>
-              <div style={{ position: "relative", display: "flex", justifyContent: "center", marginBottom: 24 }}>
-                <ScoreRing score={result.semantic_score} />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
-                <div style={{ background: "var(--surface2)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
-                  <div className="stat-label">Resume text</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginTop: 4 }}>
-                    {result.resume_chars.toLocaleString()} chars
-                  </div>
-                </div>
-                <div style={{ background: "var(--surface2)", borderRadius: "var(--radius-sm)", padding: "10px 12px" }}>
-                  <div className="stat-label">JD text</div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginTop: 4 }}>
-                    {result.jd_chars.toLocaleString()} chars
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
-                Cosine similarity: <strong style={{ color: "var(--text-secondary)" }}>{result.similarity}</strong>
-              </div>
-
-              <div style={{ marginTop: 16, padding: "10px 14px", background: "var(--surface2)", borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7 }}>
-                {result.semantic_score >= 70
-                  ? "Your resume is semantically well-aligned with this job description."
-                  : result.semantic_score >= 45
-                  ? "There's moderate alignment — consider incorporating more JD-specific language and keywords into your resume."
-                  : "Low semantic overlap detected. Review the JD carefully and tailor your resume to use similar vocabulary and highlight relevant experience."}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Result — full width, centered */}
+      {result && (
+        <div style={{ marginTop: 28, maxWidth: 760, marginLeft: "auto", marginRight: "auto" }}>
+          <div className="card" style={{ padding: 32 }}>
+            <div className="card-title" style={{ marginBottom: 24, textAlign: "center", fontSize: 16 }}>Semantic Match Result</div>
+
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+              <ScoreRing score={result.semantic_score} />
+            </div>
+
+            {result.gap_analysis?.summary && (
+              <div style={{ marginBottom: 24, padding: "12px 16px", background: "var(--surface2)", borderRadius: "var(--radius)", fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.8, textAlign: "center" }}>
+                {result.gap_analysis.summary}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+              {result.gap_analysis?.matched_areas?.length > 0 && (
+                <div>
+                  <div className="stat-label" style={{ marginBottom: 10 }}>What you cover well</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {result.gap_analysis.matched_areas.map((a) => (
+                      <span key={a} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 4, background: "var(--success-dim)", color: "var(--success)", fontWeight: 500 }}>
+                        {a}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {result.gap_analysis?.missing_keywords?.length > 0 && (
+                <div>
+                  <div className="stat-label" style={{ marginBottom: 10 }}>Missing or underrepresented</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {result.gap_analysis.missing_keywords.map((k) => (
+                      <span key={k} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 4, background: "var(--red-dim)", color: "var(--red)", fontWeight: 500 }}>
+                        {k}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {result.gap_analysis?.bridge_suggestions?.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <div className="stat-label" style={{ marginBottom: 12 }}>How to bridge the gap</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {result.gap_analysis.bridge_suggestions.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, padding: "10px 14px", background: "var(--surface2)", borderRadius: "var(--radius-sm)" }}>
+                      <span style={{ color: "var(--red)", fontWeight: 700, flexShrink: 0 }}>→</span>
+                      {s}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", justifyContent: "center", gap: 24, fontSize: 11, color: "var(--text-muted)" }}>
+              <span>Resume: {result.resume_chars.toLocaleString()} chars</span>
+              <span>JD: {result.jd_chars.toLocaleString()} chars</span>
+              <span>Cosine similarity: {result.similarity}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -386,9 +386,53 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-async def _embed(text: str, client) -> list[float]:
+async def _embed_single(text: str, client) -> list[float]:
     resp = await client.embeddings.create(model="text-embedding-3-small", input=text[:15000])
     return resp.data[0].embedding
+
+
+async def _embed_batch(texts: list[str], client) -> list[list[float]]:
+    resp = await client.embeddings.create(model="text-embedding-3-small", input=texts)
+    return [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
+
+
+_GAP_PROMPT = """\
+You are an expert resume coach and ATS specialist.
+
+A candidate's resume was compared against a job description using semantic embeddings (overall match: {score}/100).
+
+The embedding comparison identified these JD requirements as LOW similarity to the resume — the candidate is likely missing or under-representing them:
+{gap_lines}
+
+These JD requirements had HIGH similarity — already well covered:
+{matched_lines}
+
+Using the low-similarity requirements as your primary evidence, respond with JSON only (no markdown fences):
+{{
+  "matched_areas": ["3-5 short phrases the resume covers well, grounded in the high-similarity list"],
+  "missing_keywords": ["5-8 specific skills, tools, or phrases extracted directly from the low-similarity requirements"],
+  "bridge_suggestions": ["4-5 concrete, actionable resume edits that directly address the low-similarity gaps — be specific about what to add or reword"],
+  "summary": "2-3 sentence assessment grounded in the specific gaps found above"
+}}
+"""
+
+
+async def _gap_analysis(gap_chunks: list[str], matched_chunks: list[str], score: int, client) -> dict:
+    import json as _json
+    gap_lines = "\n".join(f"• {c}" for c in gap_chunks) or "• (none identified)"
+    matched_lines = "\n".join(f"• {c}" for c in matched_chunks) or "• (none identified)"
+    prompt = _GAP_PROMPT.format(score=score, gap_lines=gap_lines, matched_lines=matched_lines)
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        response_format={"type": "json_object"},
+    )
+    raw = resp.choices[0].message.content or "{}"
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return {}
 
 
 @app.post("/api/ats/semantic")
@@ -397,7 +441,7 @@ async def semantic_ats_score(
     job_id: Optional[str] = Form(None),
     jd_text: Optional[str] = Form(None),
 ):
-    """Embed a PDF resume and a job description then return cosine similarity as a 0-100 score."""
+    """Embed a PDF resume and a JD, compute cosine similarity, then run gap analysis."""
     from pypdf import PdfReader
     from openai import AsyncOpenAI
 
@@ -425,24 +469,46 @@ async def semantic_ats_score(
         if not jd_text.strip():
             raise HTTPException(status_code=400, detail="This job has no stored JD text")
 
+    # Chunk the JD into individual requirements (non-trivial lines only)
+    jd_chunks = [l.strip() for l in jd_text.splitlines() if len(l.strip()) > 25][:30]
+
     try:
         oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        resume_emb, jd_emb = await asyncio.gather(
-            _embed(resume_text, oai),
-            _embed(jd_text, oai),
+        # One batch call for [full JD] + all chunks; one call for the resume — run in parallel
+        resume_emb, batch_embs = await asyncio.gather(
+            _embed_single(resume_text, oai),
+            _embed_batch([jd_text[:15000]] + jd_chunks, oai),
         )
     except Exception as e:
         logger.exception("Embedding failed")
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
 
-    similarity = _cosine_similarity(resume_emb, jd_emb)
+    jd_full_emb = batch_embs[0]
+    chunk_embs = batch_embs[1:]
+
+    similarity = _cosine_similarity(resume_emb, jd_full_emb)
     score = round(similarity * 100)
+
+    # Score every JD chunk against the resume to surface real gaps
+    chunk_scores = sorted(
+        [(chunk, _cosine_similarity(resume_emb, emb)) for chunk, emb in zip(jd_chunks, chunk_embs)],
+        key=lambda x: x[1],
+    )
+    gap_chunks = [c for c, _ in chunk_scores[:10]]        # lowest similarity = likely missing
+    matched_chunks = [c for c, _ in chunk_scores[-6:]]    # highest similarity = already covered
+
+    try:
+        gap = await _gap_analysis(gap_chunks, matched_chunks, score, oai)
+    except Exception:
+        logger.warning("Gap analysis failed; returning score only")
+        gap = {}
 
     return {
         "semantic_score": score,
         "similarity": round(similarity, 4),
         "resume_chars": len(resume_text),
         "jd_chars": len(jd_text),
+        "gap_analysis": gap,
     }
 
 
