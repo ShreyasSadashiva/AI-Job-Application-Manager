@@ -11,11 +11,19 @@ import re
 from typing import Optional
 
 from models import AnalyzedJD, TailoredContent, Requirement
-from prompts import JD_ANALYZER_PROMPT, MASTER_RESUME_PROMPT, ACTION_VERBS, ATS_SCORER_PROMPT
-from llm_client import call_gemini
+from prompts import (
+    JD_ANALYZER_PROMPT,
+    MASTER_RESUME_PROMPT,
+    ACTION_VERBS,
+    ATS_SCORER_PROMPT,
+    RESUME_JUDGE_SYSTEM_PROMPT,
+    RESUME_JUDGE_PROMPT,
+    RESUME_REFINEMENT_PROMPT,
+    RESUME_REFINEMENT_SYSTEM_PROMPT,
+)
+from llm_client import call_gemini, call_gemini_text, call_openai_json
 from gold_points import read_experience, read_projects
 from latex_template import build_latex
-from pdf_compiler import compile_latex_to_pdf
 import supabase_client as db
 
 logger = logging.getLogger("resume_generator")
@@ -133,6 +141,62 @@ async def score_ats_standalone(resume_tex: str, jd_text: str) -> dict:
         return {"ats_score": 0, "error": str(e)}
 
 
+def _normalise_quality_review(review: dict) -> dict:
+    """Keep the judge output predictable for storage, the UI, and Gemini's next pass."""
+    def _score(name: str) -> int:
+        try:
+            return max(0, min(100, int(review.get(name, 0))))
+        except (TypeError, ValueError):
+            return 0
+
+    def _items(name: str) -> list[str]:
+        value = review.get(name, [])
+        return [str(item) for item in value] if isinstance(value, list) else []
+
+    return {
+        "overall_score": _score("overall_score"),
+        "ats_score": _score("ats_score"),
+        "matched_strengths": _items("matched_strengths"),
+        "true_gaps": _items("true_gaps"),
+        "bridged_gaps": _items("bridged_gaps"),
+        "improvement_suggestions": _items("improvement_suggestions"),
+        "gap_analysis_report": str(review.get("gap_analysis_report", "")),
+        "refinement_instructions": str(review.get("refinement_instructions", "")),
+    }
+
+
+async def judge_and_refine_resume(jd_text: str, tex_content: str) -> tuple[str, dict]:
+    """Have ChatGPT assess the draft, then let Gemini apply defensible improvements."""
+    logger.info("Quality review: assessing draft with ChatGPT...")
+    raw_review = await call_openai_json(
+        instructions=RESUME_JUDGE_SYSTEM_PROMPT,
+        prompt=RESUME_JUDGE_PROMPT.format(jd_text=jd_text[:6000], tex_content=tex_content),
+    )
+    if not isinstance(raw_review, dict):
+        raise RuntimeError("ChatGPT quality review did not return a JSON object.")
+    review = _normalise_quality_review(raw_review)
+
+    if not review["refinement_instructions"]:
+        raise RuntimeError("ChatGPT quality review returned no refinement instructions.")
+
+    logger.info("Quality review: refining draft with Gemini...")
+    refined_tex = await call_gemini_text(
+        RESUME_REFINEMENT_PROMPT.format(
+            jd_text=jd_text[:6000],
+            tex_content=tex_content,
+        ),
+        max_tokens=16384,
+        system_instruction=RESUME_REFINEMENT_SYSTEM_PROMPT.format(
+            refinement_instructions=review["refinement_instructions"],
+        ),
+    )
+    refined_tex = re.sub(r"^```(?:latex|tex)?\s*|\s*```$", "", refined_tex.strip()).strip()
+    if "\\begin{document}" not in refined_tex or "\\end{document}" not in refined_tex:
+        raise RuntimeError("Gemini refinement did not return a complete LaTeX document.")
+
+    return refined_tex, review
+
+
 async def generate_resume(
     company_name: str,
     position: str,
@@ -141,12 +205,8 @@ async def generate_resume(
 ) -> dict:
     """
     Full pipeline: JD analysis → content generation → LaTeX assembly → DB save.
-    PDF is compiled locally for the preview returned to the frontend; it is NOT stored.
-    LaTeX is saved to the tex_content column. Status starts as 'not applied'.
-    Returns dict with job record, tex_content, pdf_b64, analyzed_jd, tailored_content.
+    Returns LaTeX as text; no PDF compilation.
     """
-    import base64
-
     # Pass 1
     analyzed_jd = await analyze_jd(jd_text)
 
@@ -157,12 +217,10 @@ async def generate_resume(
     logger.info("Assembling LaTeX...")
     tex_content = build_latex(analyzed_jd, tailored)
 
-    # Compile PDF for in-browser preview only — not stored anywhere
-    logger.info("Compiling PDF for preview...")
-    pdf_bytes = compile_latex_to_pdf(tex_content)
-    pdf_b64 = base64.b64encode(pdf_bytes).decode() if pdf_bytes else None
+    # ChatGPT judges the generated draft, then Gemini refines it from that review.
+    tex_content, quality_review = await judge_and_refine_resume(jd_text, tex_content)
 
-    # Save job + LaTeX to Supabase (no PDF upload)
+    # Save job + refined LaTeX to Supabase
     logger.info("Saving to Supabase...")
     job = await db.insert_job(
         company_name=company_name,
@@ -171,10 +229,10 @@ async def generate_resume(
         jd_url=jd_url,
         jd_analysis=analyzed_jd.model_dump(),
         tailored_content=tailored.model_dump(),
-        gap_analysis=tailored.gap_analysis_report,
-        ats_score=tailored.ats_score,
+        gap_analysis=quality_review["gap_analysis_report"] or tailored.gap_analysis_report,
+        ats_score=quality_review["ats_score"] or tailored.ats_score,
         tex_content=tex_content,
-        model_used="gemini-2.5-flash",
+        model_used="gemini-2.5-flash + gpt-5-mini judge",
         status="not applied",
     )
 
@@ -182,7 +240,7 @@ async def generate_resume(
     return {
         "job": job,
         "tex_content": tex_content,
-        "pdf_b64": pdf_b64,
         "analyzed_jd": analyzed_jd.model_dump(),
         "tailored_content": tailored.model_dump(),
+        "quality_review": quality_review,
     }

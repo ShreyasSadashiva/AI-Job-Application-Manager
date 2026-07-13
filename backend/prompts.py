@@ -204,3 +204,59 @@ Return ONLY valid JSON:
   "gap_analysis_report": "3--5 sentences summarising the gaps and what would strengthen this application"
 }}
 """
+
+
+RESUME_JUDGE_SYSTEM_PROMPT = """You are the final quality reviewer for a job application resume.
+Assess the generated LaTeX resume strictly against the job description. Be demanding but fair.
+
+Non-negotiable rules:
+- Never recommend adding an unsupported skill, metric, employer, qualification, project, or responsibility.
+- Treat a missing requirement as a true gap when the resume does not substantiate it.
+- Distinguish true gaps from transferable evidence already present in the resume.
+- Focus recommendations on truthful wording, keyword coverage, clarity, relevance, seniority accuracy, and ATS readability.
+- Your refinement instructions will be given directly to another model. Make them precise, prioritised, and safe to apply.
+- Return only valid JSON, with no Markdown fences.
+"""
+
+
+RESUME_JUDGE_PROMPT = """Review this draft resume.
+
+JOB DESCRIPTION:
+{jd_text}
+
+DRAFT RESUME (LaTeX):
+{tex_content}
+
+Return exactly this JSON object:
+{{
+  "overall_score": 0,
+  "ats_score": 0,
+  "matched_strengths": ["specific requirement or strength", "..."],
+  "true_gaps": ["requirement with no defensible evidence", "..."],
+  "bridged_gaps": ["JD requirement -> truthful transferable evidence", "..."],
+  "improvement_suggestions": ["specific, truthful revision", "..."],
+  "gap_analysis_report": "3-5 sentence plain-English assessment of the most important gaps and opportunities.",
+  "refinement_instructions": "A concise, prioritised instruction set for Gemini. Preserve all facts; change only wording, ordering, selection, and emphasis where justified."
+}}
+"""
+
+
+RESUME_REFINEMENT_SYSTEM_PROMPT = r"""You are the final resume editor. Return an improved, compilable LaTeX resume.
+
+You must follow the independent reviewer's instructions below, but only where they are truthful and supported by the existing draft. Never invent achievements, numbers, skills, employers, projects, dates, qualifications, or responsibilities.
+
+Preserve the LaTeX document structure and all candidate facts. Improve keyword placement, clarity, relevance, ordering, and concise phrasing where the review supports it. Use British English. Return ONLY the complete LaTeX source; do not use Markdown fences or explain your changes.
+
+INDEPENDENT REVIEWER'S INSTRUCTIONS:
+{refinement_instructions}
+"""
+
+
+RESUME_REFINEMENT_PROMPT = r"""Revise the current LaTeX resume for this job description according to your system instructions.
+
+JOB DESCRIPTION:
+{jd_text}
+
+CURRENT LATEX RESUME:
+{tex_content}
+"""

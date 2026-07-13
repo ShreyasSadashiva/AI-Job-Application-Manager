@@ -7,7 +7,7 @@ import os
 import json
 import re
 import logging
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger("llm_client")
 
@@ -113,6 +113,7 @@ async def call_gemini_text(
     prompt: str,
     model: str = "gemini-2.5-flash",
     max_tokens: int = 8192,
+    system_instruction: Optional[str] = None,
 ) -> str:
     """Call Gemini and return raw text (not JSON)."""
     import asyncio
@@ -128,8 +129,39 @@ async def call_gemini_text(
             config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,
                 temperature=0.3,
+                system_instruction=system_instruction,
             ),
         )
         return response.text
 
     return await loop.run_in_executor(None, _call)
+
+
+async def call_openai_json(
+    instructions: str,
+    prompt: str,
+    model: str = "gpt-5-mini",
+    max_output_tokens: int = 4096,
+) -> Any:
+    """Call OpenAI's Responses API and parse the model's JSON review."""
+    import asyncio
+    from openai import OpenAI
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY must be set to run the resume quality review.")
+
+    def _call():
+        client = OpenAI(api_key=api_key, timeout=45.0, max_retries=1)
+        response = client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=prompt,
+            max_output_tokens=max_output_tokens,
+        )
+        return response.output_text
+
+    loop = asyncio.get_running_loop()
+    raw = await loop.run_in_executor(None, _call)
+    logger.debug("OpenAI review response (%s chars)", len(raw))
+    return _extract_json(raw)

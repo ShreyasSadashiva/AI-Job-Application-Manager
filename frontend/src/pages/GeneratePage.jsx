@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Zap, Download, Copy, CheckCircle, ExternalLink, FileText, AlertCircle, TrendingUp } from "lucide-react";
+import { Zap, Copy, CheckCircle, ExternalLink, FileText, AlertCircle, TrendingUp } from "lucide-react";
 import { api } from "../api";
 import { useToast } from "../context/ToastContext";
 
@@ -7,7 +7,8 @@ const STEPS = [
   { id: "jd", label: "Analysing job description..." },
   { id: "content", label: "Generating tailored bullets from gold points..." },
   { id: "latex", label: "Assembling LaTeX resume..." },
-  { id: "pdf", label: "Compiling PDF..." },
+  { id: "review", label: "ChatGPT is reviewing quality and gaps..." },
+  { id: "refine", label: "Gemini is refining the resume..." },
   { id: "save", label: "Saving to database..." },
 ];
 
@@ -43,17 +44,8 @@ function ProgressView({ currentStep }) {
 
 function ResultPanel({ result }) {
   const toast = useToast();
-  const { job, tex_content, pdf_b64, analyzed_jd, tailored_content } = result;
-
-  function downloadPdf() {
-    if (!pdf_b64) return;
-    const a = document.createElement("a");
-    a.href = `data:application/pdf;base64,${pdf_b64}`;
-    a.download = `Shreyas_Achary_CV_${job.company_name}_${job.position}.pdf`;
-    a.click();
-  }
-
-  const score = tailored_content?.ats_score ?? job?.ats_score;
+  const { job, tex_content, tailored_content, quality_review } = result;
+  const score = quality_review?.ats_score ?? tailored_content?.ats_score ?? job?.ats_score;
 
   return (
     <div className="flex-col gap-3">
@@ -80,14 +72,9 @@ function ResultPanel({ result }) {
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2">
-        {pdf_b64 && (
-          <button className="btn btn-primary" onClick={downloadPdf}>
-            <Download size={14} /> Download PDF
-          </button>
-        )}
+      <div className="flex gap-2 items-center">
         {tex_content && (
-          <button className="btn btn-secondary" onClick={() => { navigator.clipboard.writeText(tex_content); toast.success("LaTeX copied"); }}>
+          <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(tex_content); toast.success("LaTeX copied"); }}>
             <Copy size={14} /> Copy LaTeX
           </button>
         )}
@@ -95,6 +82,21 @@ function ResultPanel({ result }) {
           <CheckCircle size={14} /> Saved to tracker
         </span>
       </div>
+
+      {/* LaTeX output */}
+      {tex_content && (
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+            <div className="card-title" style={{ marginBottom: 0 }}><FileText size={14} /> Generated LaTeX</div>
+          </div>
+          <textarea
+            className="code-editor"
+            readOnly
+            value={tex_content}
+            style={{ minHeight: 400, borderRadius: 0, border: "none" }}
+          />
+        </div>
+      )}
 
       {/* Skills */}
       {tailored_content?.skills_data && Object.keys(tailored_content.skills_data).length > 0 && (
@@ -109,27 +111,18 @@ function ResultPanel({ result }) {
         </div>
       )}
 
-      {/* PDF Preview */}
-      {pdf_b64 && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div className="card-title" style={{ marginBottom: 0 }}><FileText size={14} /> PDF Preview</div>
-          </div>
-          <iframe
-            src={`data:application/pdf;base64,${pdf_b64}`}
-            className="pdf-frame"
-            style={{ height: 600, border: "none" }}
-          />
-        </div>
-      )}
-
-      {/* Gap analysis */}
-      {tailored_content?.gap_analysis_report && (
+      {/* Final quality review */}
+      {(quality_review?.gap_analysis_report || tailored_content?.gap_analysis_report) && (
         <div className="card">
-          <div className="card-title"><AlertCircle size={14} /> Gap Analysis</div>
+          <div className="card-title"><AlertCircle size={14} /> Final Quality Review & Gap Analysis</div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
-            {tailored_content.gap_analysis_report}
+            {quality_review?.gap_analysis_report || tailored_content?.gap_analysis_report}
           </div>
+          {quality_review?.improvement_suggestions?.length > 0 && (
+            <ul style={{ margin: "12px 0 0", paddingLeft: 18, fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.8 }}>
+              {quality_review.improvement_suggestions.map((suggestion, i) => <li key={i}>{suggestion}</li>)}
+            </ul>
+          )}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  PenLine, ExternalLink, Copy, Download, CheckCircle, AlertCircle, X,
+  PenLine, ExternalLink, Copy, CheckCircle, AlertCircle, X,
   Zap, Save, FileText, Search, ChevronRight,
 } from "lucide-react";
 import { api } from "../api";
@@ -167,13 +167,11 @@ export default function ManualEditPage() {
 
   // State
   const [fetchingJD, setFetchingJD] = useState(false);
-  const [compiling, setCompiling] = useState(false);
   const [scoring, setScoring] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analyzingJD, setAnalyzingJD] = useState(false);
 
   // Results
-  const [pdfB64, setPdfB64] = useState(null);
   const [atsResult, setAtsResult] = useState(null);
   const [jdAnalysis, setJdAnalysis] = useState(null);
 
@@ -210,21 +208,6 @@ export default function ManualEditPage() {
     }
   }
 
-  async function handleCompile() {
-    if (!tex.trim()) return toast.error("No LaTeX content");
-    setCompiling(true);
-    setPdfB64(null);
-    try {
-      const { pdf_b64 } = await api.compileLatex(tex);
-      setPdfB64(pdf_b64);
-      toast.success("Compiled successfully");
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setCompiling(false);
-    }
-  }
-
   async function handleScoreAts() {
     if (!tex.trim()) return toast.error("No LaTeX content");
     if (!jdText.trim()) return toast.error("No JD text — paste the JD above");
@@ -236,28 +219,6 @@ export default function ManualEditPage() {
     } catch (e) {
       toast.error(e.message);
     } finally {
-      setScoring(false);
-    }
-  }
-
-  async function handleCompileAndScore() {
-    if (!tex.trim()) return toast.error("No LaTeX content");
-    if (!jdText.trim()) return toast.error("No JD text");
-    setCompiling(true);
-    setScoring(true);
-    setPdfB64(null);
-    try {
-      const [compileRes, scoreRes] = await Promise.all([
-        api.compileLatex(tex),
-        api.scoreAts({ resume_tex: tex, jd_text: jdText }),
-      ]);
-      setPdfB64(compileRes.pdf_b64);
-      setAtsResult(scoreRes);
-      toast.success(`Done · ATS: ${scoreRes.ats_score}`);
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setCompiling(false);
       setScoring(false);
     }
   }
@@ -417,17 +378,9 @@ export default function ManualEditPage() {
           <div className="card" style={{ padding: 14 }}>
             <div className="section-label" style={{ marginBottom: 10 }}>ACTIONS</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <button className="btn btn-primary" onClick={handleCompile} disabled={compiling || !tex.trim()}>
-                {compiling ? <span className="spinner" /> : <FileText size={14} />}
-                Compile PDF
-              </button>
               <button className="btn btn-secondary" onClick={handleScoreAts} disabled={scoring || !tex.trim() || !jdText.trim()}>
                 {scoring ? <span className="spinner" style={{ borderTopColor: "var(--red)" }} /> : <Zap size={14} />}
                 Score ATS
-              </button>
-              <button className="btn btn-secondary" onClick={handleCompileAndScore} disabled={compiling || scoring || !tex.trim() || !jdText.trim()}>
-                {(compiling || scoring) ? <span className="spinner" style={{ borderTopColor: "var(--red)" }} /> : <Zap size={14} />}
-                Compile + Score
               </button>
               <div style={{ height: 1, background: "var(--border)", width: "100%", margin: "4px 0" }} />
               <button className="btn btn-secondary" onClick={() => handleSave("not applied")} disabled={saving || !tex.trim()}>
@@ -444,31 +397,15 @@ export default function ManualEditPage() {
 
         {/* Right — PDF + ATS */}
         <div className="edit-right">
-          {/* PDF Preview */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>PDF Preview</div>
-              {pdfB64 && (
-                <button className="btn btn-secondary btn-sm" onClick={downloadPdf}>
-                  <Download size={12} /> Download
-                </button>
-              )}
-            </div>
-            {pdfB64 ? (
-              <iframe
-                src={`data:application/pdf;base64,${pdfB64}`}
-                className="pdf-frame"
-                style={{ height: 550, border: "none" }}
-              />
-            ) : (
-              <div className="result-placeholder" style={{ height: 550, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: 0 }}>
-                <div>
-                  <FileText size={32} style={{ margin: "0 auto 8px", display: "block", opacity: 0.3 }} />
-                  <div style={{ fontSize: 12 }}>Click "Compile PDF" to preview</div>
-                </div>
+          {/* ATS placeholder when not yet scored */}
+          {!atsResult && (
+            <div className="card" style={{ padding: 14 }}>
+              <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)" }}>
+                <FileText size={28} style={{ margin: "0 auto 8px", display: "block", opacity: 0.3 }} />
+                <div style={{ fontSize: 12 }}>Paste a JD and click Score ATS to analyse your resume</div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* ATS Result */}
           {atsResult && (

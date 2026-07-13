@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
-  Trash2, Eye, ExternalLink, Plus, Search, Star, Download,
-  Briefcase, FileText, TrendingUp, Award, X, ChevronDown, Copy, RefreshCw,
+  Trash2, Eye, ExternalLink, Plus, Search, Star,
+  Briefcase, FileText, X, ChevronDown, Copy, RefreshCw,
 } from "lucide-react";
 import { api } from "../api";
 import { useToast } from "../context/ToastContext";
@@ -34,32 +34,9 @@ function JobDetailModal({ job, onClose, onUpdate }) {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState("overview");
   const [tex, setTex] = useState(job.tex_content || "");
-  const [pdfB64, setPdfB64] = useState(null);
-  const [compiling, setCompiling] = useState(false);
   const [scoring, setScoring] = useState(false);
   const [atsResult, setAtsResult] = useState(null);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (job.tex_content && activeTab === "resume") {
-      // Auto-load PDF from storage
-      setPdfB64(null);
-    }
-  }, [activeTab, job.tex_content]);
-
-  async function compile() {
-    if (!tex.trim()) return toast.error("No LaTeX content");
-    setCompiling(true);
-    try {
-      const { pdf_b64 } = await api.compileLatex(tex);
-      setPdfB64(pdf_b64);
-      toast.success("Compiled successfully");
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setCompiling(false);
-    }
-  }
 
   async function scoreAts() {
     if (!tex.trim()) return toast.error("No LaTeX content");
@@ -86,14 +63,6 @@ function JobDetailModal({ job, onClose, onUpdate }) {
     } finally {
       setSaving(false);
     }
-  }
-
-  function downloadPdf() {
-    if (!pdfB64) return;
-    const a = document.createElement("a");
-    a.href = `data:application/pdf;base64,${pdfB64}`;
-    a.download = `Shreyas_Achary_CV_${job.company_name}_${job.position}.pdf`;
-    a.click();
   }
 
   const tabs = [
@@ -173,21 +142,16 @@ function JobDetailModal({ job, onClose, onUpdate }) {
 
         {activeTab === "resume" && (
           <div>
-            <div className="flex gap-2 mb-3" style={{ marginBottom: 12 }}>
-              <button className="btn btn-primary btn-sm" onClick={compile} disabled={compiling}>
-                {compiling ? <span className="spinner" /> : null} Compile
-              </button>
+            <div className="flex gap-2" style={{ marginBottom: 12 }}>
               <button className="btn btn-secondary btn-sm" onClick={scoreAts} disabled={scoring}>
-                {scoring ? <span className="spinner" /> : null} Score ATS
+                {scoring ? <span className="spinner" style={{ borderTopColor: "var(--red)" }} /> : null} Score ATS
               </button>
               <button className="btn btn-secondary btn-sm" onClick={saveTex} disabled={saving}>
-                {saving ? <span className="spinner" /> : null} Save
+                {saving ? <span className="spinner" style={{ borderTopColor: "var(--red)" }} /> : null} Save
               </button>
-              {pdfB64 && (
-                <button className="btn btn-secondary btn-sm" onClick={downloadPdf}>
-                  <Download size={13} /> Download PDF
-                </button>
-              )}
+              <button className="btn btn-ghost btn-sm" onClick={() => { navigator.clipboard.writeText(tex); toast.success("Copied"); }}>
+                <Copy size={13} /> Copy
+              </button>
             </div>
 
             {atsResult && (
@@ -225,29 +189,12 @@ function JobDetailModal({ job, onClose, onUpdate }) {
               </div>
             )}
 
-            <div className="two-col" style={{ gap: 12 }}>
-              <div>
-                <div className="section-label" style={{ marginBottom: 6 }}>LATEX</div>
-                <textarea className="code-editor" value={tex} onChange={(e) => setTex(e.target.value)} />
-              </div>
-              <div>
-                <div className="section-label" style={{ marginBottom: 6 }}>PDF PREVIEW</div>
-                {pdfB64 ? (
-                  <iframe
-                    className="pdf-frame"
-                    src={`data:application/pdf;base64,${pdfB64}`}
-                    style={{ height: 500, border: "1px solid var(--border)", borderRadius: 6 }}
-                  />
-                ) : (
-                  <div className="result-placeholder" style={{ height: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <div>
-                      <FileText size={32} style={{ margin: "0 auto 8px", display: "block", opacity: 0.3 }} />
-                      <div style={{ fontSize: 12 }}>Click Compile to preview PDF</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <textarea
+              className="code-editor"
+              value={tex}
+              onChange={(e) => setTex(e.target.value)}
+              style={{ minHeight: 500, width: "100%" }}
+            />
           </div>
         )}
 

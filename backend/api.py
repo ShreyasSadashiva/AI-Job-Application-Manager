@@ -4,13 +4,13 @@ Features: Resume generation from gold points, job tracker, manual edit, ATS scor
 """
 
 import os
-import base64
 import logging
 from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -32,6 +32,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(db.DatabaseRequestError)
+async def database_request_error_handler(_, exc: db.DatabaseRequestError):
+    """Return a clear error to the UI when Supabase is slow or unavailable."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -126,6 +132,8 @@ async def generate(req: GenerateRequest):
             jd_url=req.jd_url,
         )
         return result
+    except db.DatabaseRequestError:
+        raise
     except Exception as e:
         logger.exception("Resume generation failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -182,21 +190,6 @@ async def delete_job(job_id: str):
     return {"success": True}
 
 
-# ── LaTeX Compile ─────────────────────────────────────────────────────────────
-
-@app.post("/api/compile/latex")
-async def compile_latex(req: CompileRequest):
-    if not req.tex_content.strip():
-        raise HTTPException(status_code=400, detail="LaTeX content is required")
-
-    from pdf_compiler import compile_latex_to_pdf
-    pdf_bytes = compile_latex_to_pdf(req.tex_content)
-    if not pdf_bytes:
-        raise HTTPException(status_code=500, detail="LaTeX compilation failed. Check pdflatex is installed.")
-
-    return {"pdf_b64": base64.b64encode(pdf_bytes).decode()}
-
-
 # ── ATS Scoring ───────────────────────────────────────────────────────────────
 
 @app.post("/api/ats/score")
@@ -245,16 +238,7 @@ class SaveResumeRequest(BaseModel):
 
 @app.post("/api/jobs/save-resume")
 async def save_resume(req: SaveResumeRequest):
-    """
-    Save manually edited LaTeX to Supabase (tex_content column).
-    Compiles PDF locally and returns it as base64 for the browser preview — not stored.
-    """
-    from pdf_compiler import compile_latex_to_pdf
-
-    # Compile for in-browser preview only
-    pdf_bytes = compile_latex_to_pdf(req.tex_content)
-    pdf_b64 = base64.b64encode(pdf_bytes).decode() if pdf_bytes else None
-
+    """Save manually edited LaTeX to Supabase (tex_content column)."""
     if req.job_id:
         updates = {
             "tex_content": req.tex_content,
@@ -278,4 +262,4 @@ async def save_resume(req: SaveResumeRequest):
             model_used="manual",
         )
 
-    return {"job": job, "pdf_b64": pdf_b64}
+    return {"job": job}

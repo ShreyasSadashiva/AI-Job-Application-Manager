@@ -1,6 +1,6 @@
 """
 Supabase database client for v2 ApplyFlow.
-Uses the job_applications table. LaTeX is stored as text in tex_content — no file storage bucket needed.
+Uses the v2_job_applications table. LaTeX is stored as text in tex_content — no file storage bucket needed.
 """
 
 import os
@@ -12,24 +12,44 @@ from datetime import datetime
 logger = logging.getLogger("supabase_client")
 
 _client = None
+DB_TIMEOUT_SECONDS = 20
+
+
+class DatabaseRequestError(RuntimeError):
+    """A database request could not be completed in a useful amount of time."""
 
 
 def _get_client():
     global _client
     if _client is None:
-        from supabase import create_client
+        from supabase import ClientOptions, create_client
         url = os.getenv("SUPABASE_URL", "")
         key = os.getenv("SUPABASE_KEY", "")
         if not url or not key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in environment")
-        _client = create_client(url, key)
+            raise DatabaseRequestError("Database is not configured. Set SUPABASE_URL and SUPABASE_KEY.")
+        _client = create_client(
+            url,
+            key,
+            options=ClientOptions(postgrest_client_timeout=DB_TIMEOUT_SECONDS),
+        )
     return _client
 
 
-def _run_sync(fn):
-    """Run a sync supabase call in an executor."""
-    loop = asyncio.get_event_loop()
-    return loop.run_in_executor(None, fn)
+async def _run_sync(fn, operation: str):
+    """Run a sync Supabase call without allowing a request to hang the API."""
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, fn),
+            timeout=DB_TIMEOUT_SECONDS + 2,
+        )
+    except asyncio.TimeoutError as exc:
+        message = f"Database {operation} timed out after {DB_TIMEOUT_SECONDS} seconds. Please try again."
+        logger.error(message)
+        raise DatabaseRequestError(message) from exc
+    except Exception as exc:
+        logger.exception("Database %s failed", operation)
+        raise DatabaseRequestError(f"Database {operation} failed: {exc}") from exc
 
 
 # ── Job Applications ──────────────────────────────────────────────────────────
@@ -70,9 +90,9 @@ async def insert_job(
         row["model_used"] = model_used
 
     def _call():
-        return client.table("job_applications").insert(row).execute()
+        return client.table("v2_job_applications").insert(row).execute()
 
-    result = await _run_sync(_call)
+    result = await _run_sync(_call, "save")
     return result.data[0] if result.data else {}
 
 
@@ -80,10 +100,10 @@ async def get_job(job_id: str) -> Optional[dict]:
     client = _get_client()
 
     def _call():
-        return client.table("job_applications").select("*").eq("id", job_id).single().execute()
+        return client.table("v2_job_applications").select("*").eq("id", job_id).single().execute()
 
     try:
-        result = await _run_sync(_call)
+        result = await _run_sync(_call, "lookup")
         return result.data
     except Exception as e:
         logger.error(f"get_job {job_id}: {e}")
@@ -97,7 +117,7 @@ async def get_all_jobs(
     client = _get_client()
 
     def _call():
-        q = client.table("job_applications").select(
+        q = client.table("v2_job_applications").select(
             "id, company_name, position, jd_url, ats_score, status, model_used, "
             "created_at, updated_at, is_favourite, got_interview, "
             "tex_content, gap_analysis"
@@ -111,7 +131,7 @@ async def get_all_jobs(
         return q.execute()
 
     try:
-        result = await _run_sync(_call)
+        result = await _run_sync(_call, "list")
         return result.data or []
     except Exception as e:
         logger.error(f"get_all_jobs: {e}")
@@ -123,9 +143,9 @@ async def update_job(job_id: str, updates: dict) -> dict:
     updates["updated_at"] = datetime.utcnow().isoformat()
 
     def _call():
-        return client.table("job_applications").update(updates).eq("id", job_id).execute()
+        return client.table("v2_job_applications").update(updates).eq("id", job_id).execute()
 
-    result = await _run_sync(_call)
+    result = await _run_sync(_call, "update")
     return result.data[0] if result.data else {}
 
 
@@ -133,13 +153,12 @@ async def delete_job(job_id: str) -> bool:
     client = _get_client()
 
     def _call():
-        return client.table("job_applications").delete().eq("id", job_id).execute()
+        return client.table("v2_job_applications").delete().eq("id", job_id).execute()
 
     try:
-        await _run_sync(_call)
+        await _run_sync(_call, "delete")
         return True
     except Exception as e:
         logger.error(f"delete_job {job_id}: {e}")
         return False
-
 

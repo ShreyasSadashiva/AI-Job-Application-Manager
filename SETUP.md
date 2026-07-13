@@ -14,8 +14,8 @@ Run the following SQL in the **Supabase SQL Editor** (Dashboard → SQL Editor �
 -- Enable UUID generation
 create extension if not exists "pgcrypto";
 
--- Job applications table
-create table job_applications (
+-- v2 job applications table (separate from the main ApplyFlow job_applications table)
+create table v2_job_applications (
   id            uuid primary key default gen_random_uuid(),
 
   -- Job info
@@ -55,10 +55,10 @@ create table job_applications (
 );
 
 -- Index for fast listing (newest first)
-create index on job_applications (created_at desc);
+create index on v2_job_applications (created_at desc);
 
 -- Auto-update updated_at on every row change
-create or replace function set_updated_at()
+create or replace function v2_set_updated_at()
 returns trigger language plpgsql as $$
 begin
   new.updated_at = now();
@@ -66,9 +66,9 @@ begin
 end;
 $$;
 
-create trigger job_applications_updated_at
-before update on job_applications
-for each row execute procedure set_updated_at();
+create trigger v2_job_applications_updated_at
+before update on v2_job_applications
+for each row execute procedure v2_set_updated_at();
 ```
 
 > No storage bucket is needed. LaTeX is stored as plain text in the `tex_content` column.
@@ -81,6 +81,7 @@ Edit `backend/.env` and fill in:
 
 ```
 GEMINI_API_KEY=your_gemini_key          # console.cloud.google.com → APIs → Gemini API
+OPENAI_API_KEY=your_openai_key          # platform.openai.com → API keys; used for the quality review
 SUPABASE_URL=https://xxxx.supabase.co   # Settings → API → Project URL
 SUPABASE_KEY=your_supabase_anon_key     # Settings → API → anon public key
 ```

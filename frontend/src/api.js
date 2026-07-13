@@ -45,9 +45,6 @@ export const api = {
   // PDF
   getPdfUrl: (jobId) => `${BASE}/api/jobs/${jobId}/pdf`,
 
-  // Compile
-  compileLatex: (tex_content) => request("/api/compile/latex", { method: "POST", body: JSON.stringify({ tex_content }) }),
-
   // ATS
   scoreAts: (data) => request("/api/ats/score", { method: "POST", body: JSON.stringify(data) }),
 
