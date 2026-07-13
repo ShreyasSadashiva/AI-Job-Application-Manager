@@ -23,7 +23,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("api")
 
-from resume_generator import generate_resume, score_ats_standalone, analyze_jd
+from resume_generator import generate_resume, generate_resume_v3, score_ats_standalone, analyze_jd
 import supabase_client as db
 
 app = FastAPI(title="ApplyFlow v2", version="2.0.0")
@@ -70,6 +70,14 @@ class UpdateJobRequest(BaseModel):
     is_favourite: Optional[bool] = None
     company_name: Optional[str] = None
     position: Optional[str] = None
+
+
+class GenerateV3Request(BaseModel):
+    company_name: str
+    position: str
+    jd_text: str
+    candidate_voice: str
+    jd_url: Optional[str] = None
 
 
 class CompileRequest(BaseModel):
@@ -139,6 +147,30 @@ async def generate(req: GenerateRequest):
         raise
     except Exception as e:
         logger.exception("Resume generation failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── V3 Three-Pass Generation ──────────────────────────────────────────────────
+
+@app.post("/api/generate/resume-v3")
+async def generate_v3(req: GenerateV3Request):
+    if not req.jd_text.strip():
+        raise HTTPException(status_code=400, detail="JD text is required")
+    if not req.company_name.strip() or not req.position.strip():
+        raise HTTPException(status_code=400, detail="Company name and position are required")
+    if not req.candidate_voice.strip():
+        raise HTTPException(status_code=400, detail="Candidate voice description is required")
+    try:
+        result = await generate_resume_v3(
+            company_name=req.company_name,
+            position=req.position,
+            jd_text=req.jd_text,
+            candidate_voice=req.candidate_voice,
+            jd_url=req.jd_url,
+        )
+        return result
+    except Exception as e:
+        logger.exception("V3 resume generation failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 

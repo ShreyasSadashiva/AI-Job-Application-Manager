@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Zap, LayoutGrid, PenLine, BarChart3, ScanSearch } from "lucide-react";
+import { Zap, LayoutGrid, PenLine, BarChart3, ScanSearch, FlaskConical } from "lucide-react";
 
 const navItems = [
   { to: "/tracker", icon: <LayoutGrid size={16} />, label: "Job Tracker" },
@@ -7,6 +7,7 @@ const navItems = [
   { to: "/edit", icon: <PenLine size={16} />, label: "Manual Edit" },
   { to: "/insights", icon: <BarChart3 size={16} />, label: "Insights" },
   { to: "/ats", icon: <ScanSearch size={16} />, label: "ATS Scorer" },
+  { to: "/test", icon: <FlaskConical size={16} />, label: "Test Feature" },
 ];
 
 export default function Sidebar() {

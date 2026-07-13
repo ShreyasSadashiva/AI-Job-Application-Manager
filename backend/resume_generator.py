@@ -15,6 +15,9 @@ from models import AnalyzedJD, TailoredContent, Requirement
 from prompts import (
     JD_ANALYZER_PROMPT,
     MASTER_RESUME_PROMPT,
+    MASTER_RESUME_PROMPT_V3,
+    VOICE_ANALYZER_PROMPT,
+    CRITIQUE_REWRITE_PROMPT,
     ACTION_VERBS,
     ATS_SCORER_PROMPT,
     IDEAL_RESUME_SYSTEM_PROMPT,
@@ -214,6 +217,157 @@ async def benchmark_resume_gaps(jd_text: str, tex_content: str) -> tuple[dict, d
     ideal_resume = await build_ideal_resume(jd_text)
     gap_report = await compare_against_ideal(jd_text, ideal_resume, tex_content)
     return ideal_resume, gap_report
+
+
+# ── V3 Three-Pass Pipeline ────────────────────────────────────────────────────
+
+async def analyze_voice(candidate_voice: str) -> dict:
+    """Pass 0: Extract ownership level, proud-of items and confidence signals from raw voice."""
+    prompt = VOICE_ANALYZER_PROMPT.format(candidate_voice=candidate_voice[:4000])
+    logger.info("V3 Pass 0: Analysing candidate voice...")
+    return await call_gemini(prompt)
+
+
+async def generate_content_v3(analyzed_jd: AnalyzedJD, voice_profile: dict) -> TailoredContent:
+    """Pass 1 (V3): Write resume bullets calibrated to voice profile."""
+    experience_text = read_experience()
+    project_text = read_projects()
+    jd_analysis_str = json.dumps(analyzed_jd.model_dump(), indent=2)
+    voice_str = json.dumps(voice_profile, indent=2)
+
+    prompt = MASTER_RESUME_PROMPT_V3.format(
+        jd_analysis=jd_analysis_str,
+        experience_text=experience_text[:8000],
+        project_text=project_text[:4000],
+        voice_profile=voice_str,
+        action_verbs=ACTION_VERBS,
+    )
+
+    logger.info("V3 Pass 1: Writing tailored content with voice calibration...")
+    raw = await call_gemini(prompt)
+
+    projects = []
+    for p in raw.get("selected_projects", []):
+        if isinstance(p, dict):
+            projects.append({
+                "name": p.get("name", ""),
+                "demo_url": p.get("demo_url"),
+                "github_url": p.get("github_url"),
+                "bullets": p.get("bullets", []),
+                "reasoning": p.get("reasoning", ""),
+            })
+
+    return TailoredContent(
+        target_title=raw.get("target_title"),
+        summary=raw.get("summary"),
+        skills_data=raw.get("skills_data", {}),
+        tepiche_title=raw.get("tepiche_title"),
+        tepiche_bullets=raw.get("tepiche_bullets", []),
+        ltimindtree_title=raw.get("ltimindtree_title"),
+        ltimindtree_bullets=raw.get("ltimindtree_bullets", []),
+        bullet_reasoning=raw.get("bullet_reasoning", {}),
+        selected_projects=projects,
+        gap_analysis_report=raw.get("gap_analysis_report"),
+        ats_score=raw.get("ats_score"),
+        validation_checks=raw.get("validation_checks"),
+    )
+
+
+def _apply_critique(tailored: TailoredContent, critique: dict) -> TailoredContent:
+    """Merge WEAK→rewritten bullets from the critique back into the tailored content."""
+    def _merge(originals: list, reviewed: list) -> list:
+        result = []
+        for i, orig in enumerate(originals):
+            if i < len(reviewed) and reviewed[i].get("rating") == "WEAK" and reviewed[i].get("rewritten"):
+                result.append(reviewed[i]["rewritten"])
+            else:
+                result.append(orig)
+        return result
+
+    reviewed = critique.get("reviewed_bullets", {})
+    final_tepiche = _merge(tailored.tepiche_bullets, reviewed.get("tepiche", []))
+    final_ltimindtree = _merge(tailored.ltimindtree_bullets, reviewed.get("ltimindtree", []))
+
+    final_projects = []
+    proj_reviews = {r["project_name"]: r["bullets"] for r in critique.get("projects", []) if "project_name" in r}
+    for proj in tailored.selected_projects:
+        reviewed_bullets = proj_reviews.get(proj.get("name", ""), [])
+        final_projects.append({**proj, "bullets": _merge(proj.get("bullets", []), reviewed_bullets)})
+
+    return TailoredContent(
+        **{**tailored.model_dump(),
+           "tepiche_bullets": final_tepiche,
+           "ltimindtree_bullets": final_ltimindtree,
+           "selected_projects": final_projects}
+    )
+
+
+async def critique_and_rewrite(
+    tailored: TailoredContent,
+    analyzed_jd: AnalyzedJD,
+    voice_profile: dict,
+) -> tuple[TailoredContent, dict]:
+    """Pass 2: Critique bullets and rewrite the weak ones."""
+    bullets_json = {
+        "tepiche": tailored.tepiche_bullets,
+        "ltimindtree": tailored.ltimindtree_bullets,
+    }
+    if tailored.selected_projects:
+        bullets_json["projects"] = [
+            {"name": p["name"], "bullets": p["bullets"]} for p in tailored.selected_projects
+        ]
+
+    prompt = CRITIQUE_REWRITE_PROMPT.format(
+        bullets_json=json.dumps(bullets_json, indent=2),
+        jd_analysis=json.dumps(analyzed_jd.model_dump(), indent=2)[:3000],
+        voice_profile=json.dumps(voice_profile, indent=2),
+    )
+
+    logger.info("V3 Pass 2: Critiquing and rewriting weak bullets...")
+    critique = await call_gemini(prompt)
+    return _apply_critique(tailored, critique), critique
+
+
+async def generate_resume_v3(
+    company_name: str,
+    position: str,
+    jd_text: str,
+    candidate_voice: str,
+    jd_url: Optional[str] = None,
+) -> dict:
+    """Three-pass pipeline: Voice + JD analysis → V3 write → Critique & rewrite → LaTeX."""
+    # Pass 0 + JD analysis run in parallel
+    analyzed_jd, voice_profile = await asyncio.gather(
+        analyze_jd(jd_text),
+        analyze_voice(candidate_voice),
+    )
+
+    # Pass 1: write with voice calibration
+    tailored_raw = await generate_content_v3(analyzed_jd, voice_profile)
+
+    # Pass 2: critique and rewrite
+    tailored_final, critique = await critique_and_rewrite(tailored_raw, analyzed_jd, voice_profile)
+
+    # Assemble LaTeX
+    logger.info("V3: Assembling LaTeX...")
+    tex_content = build_latex(analyzed_jd, tailored_final)
+
+    # ATS score (non-blocking)
+    try:
+        ats_report = await score_ats_standalone(tex_content, jd_text)
+    except Exception as e:
+        ats_report = {"ats_score": 0, "error": str(e)}
+
+    logger.info("V3 resume generated for %s — %s", company_name, position)
+    return {
+        "tex_content": tex_content,
+        "voice_profile": voice_profile,
+        "analyzed_jd": analyzed_jd.model_dump(),
+        "tailored_raw": tailored_raw.model_dump(),
+        "tailored_final": tailored_final.model_dump(),
+        "critique": critique,
+        "ats_report": ats_report,
+    }
 
 
 async def generate_resume(

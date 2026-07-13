@@ -5,6 +5,7 @@ import GeneratePage from "./pages/GeneratePage";
 import ManualEditPage from "./pages/ManualEditPage";
 import InsightsPage from "./pages/InsightsPage";
 import ATSPage from "./pages/ATSPage";
+import TestFeaturePage from "./pages/TestFeaturePage";
 import { ToastProvider } from "./context/ToastContext";
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
               <Route path="/edit" element={<ManualEditPage />} />
               <Route path="/insights" element={<InsightsPage />} />
               <Route path="/ats" element={<ATSPage />} />
+              <Route path="/test" element={<TestFeaturePage />} />
             </Routes>
           </main>
         </div>

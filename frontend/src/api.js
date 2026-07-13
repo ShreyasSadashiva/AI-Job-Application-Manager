@@ -56,6 +56,9 @@ export const api = {
   // Insights
   getInsights: () => request("/api/insights"),
 
+  // V3 three-pass generation
+  generateResumeV3: (data) => request("/api/generate/resume-v3", { method: "POST", body: JSON.stringify(data) }),
+
   // Semantic ATS (PDF upload)
   semanticAts: async (file, jobId, jdText) => {
     const form = new FormData();
