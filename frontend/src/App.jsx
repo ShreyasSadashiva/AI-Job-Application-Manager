@@ -4,6 +4,7 @@ import TrackerPage from "./pages/TrackerPage";
 import GeneratePage from "./pages/GeneratePage";
 import ManualEditPage from "./pages/ManualEditPage";
 import InsightsPage from "./pages/InsightsPage";
+import ATSPage from "./pages/ATSPage";
 import { ToastProvider } from "./context/ToastContext";
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
               <Route path="/generate" element={<GeneratePage />} />
               <Route path="/edit" element={<ManualEditPage />} />
               <Route path="/insights" element={<InsightsPage />} />
+              <Route path="/ats" element={<ATSPage />} />
             </Routes>
           </main>
         </div>

@@ -55,4 +55,18 @@ export const api = {
 
   // Insights
   getInsights: () => request("/api/insights"),
+
+  // Semantic ATS (PDF upload)
+  semanticAts: async (file, jobId, jdText) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (jobId) form.append("job_id", jobId);
+    if (jdText) form.append("jd_text", jdText);
+    const res = await fetch("/api/ats/semantic", { method: "POST", body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
 };

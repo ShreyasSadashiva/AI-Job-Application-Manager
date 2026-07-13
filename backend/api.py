@@ -3,13 +3,16 @@ ApplyFlow v2 — FastAPI backend
 Features: Resume generation from gold points, job tracker, manual edit, ATS scoring
 """
 
+import asyncio
+import io
+import math
 import os
 import logging
 from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -370,6 +373,77 @@ class SaveResumeRequest(BaseModel):
     ats_score: Optional[int] = None
     gap_analysis: Optional[str] = None
     status: str = "not applied"
+
+
+# ── Semantic ATS Scoring (embedding-based) ───────────────────────────────────
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x ** 2 for x in a))
+    norm_b = math.sqrt(sum(x ** 2 for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+async def _embed(text: str, client) -> list[float]:
+    resp = await client.embeddings.create(model="text-embedding-3-small", input=text[:15000])
+    return resp.data[0].embedding
+
+
+@app.post("/api/ats/semantic")
+async def semantic_ats_score(
+    file: UploadFile = File(...),
+    job_id: Optional[str] = Form(None),
+    jd_text: Optional[str] = Form(None),
+):
+    """Embed a PDF resume and a job description then return cosine similarity as a 0-100 score."""
+    from pypdf import PdfReader
+    from openai import AsyncOpenAI
+
+    if not job_id and not (jd_text and jd_text.strip()):
+        raise HTTPException(status_code=400, detail="Provide job_id or jd_text")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        resume_text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse PDF: {e}")
+
+    if not resume_text:
+        raise HTTPException(status_code=400, detail="No text could be extracted from the PDF")
+
+    if job_id and not jd_text:
+        job = await db.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jd_text = job.get("jd_text") or ""
+        if not jd_text.strip():
+            raise HTTPException(status_code=400, detail="This job has no stored JD text")
+
+    try:
+        oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        resume_emb, jd_emb = await asyncio.gather(
+            _embed(resume_text, oai),
+            _embed(jd_text, oai),
+        )
+    except Exception as e:
+        logger.exception("Embedding failed")
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+
+    similarity = _cosine_similarity(resume_emb, jd_emb)
+    score = round(similarity * 100)
+
+    return {
+        "semantic_score": score,
+        "similarity": round(similarity, 4),
+        "resume_chars": len(resume_text),
+        "jd_chars": len(jd_text),
+    }
 
 
 @app.post("/api/jobs/save-resume")

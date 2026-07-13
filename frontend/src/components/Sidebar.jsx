@@ -1,11 +1,12 @@
 import { NavLink } from "react-router-dom";
-import { Zap, LayoutGrid, PenLine, BarChart3 } from "lucide-react";
+import { Zap, LayoutGrid, PenLine, BarChart3, ScanSearch } from "lucide-react";
 
 const navItems = [
   { to: "/tracker", icon: <LayoutGrid size={16} />, label: "Job Tracker" },
   { to: "/generate", icon: <Zap size={16} />, label: "Generate Resume" },
   { to: "/edit", icon: <PenLine size={16} />, label: "Manual Edit" },
   { to: "/insights", icon: <BarChart3 size={16} />, label: "Insights" },
+  { to: "/ats", icon: <ScanSearch size={16} />, label: "ATS Scorer" },
 ];
 
 export default function Sidebar() {
