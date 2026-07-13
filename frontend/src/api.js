@@ -41,6 +41,7 @@ export const api = {
 
   // Resume save
   saveResume: (data) => request("/api/jobs/save-resume", { method: "POST", body: JSON.stringify(data) }),
+  saveGenerated: (data) => request("/api/jobs/save-generated", { method: "POST", body: JSON.stringify(data) }),
 
   // PDF
   getPdfUrl: (jobId) => `${BASE}/api/jobs/${jobId}/pdf`,

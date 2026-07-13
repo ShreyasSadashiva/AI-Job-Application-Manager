@@ -25,7 +25,6 @@ from prompts import (
 from llm_client import call_gemini, call_openai_json
 from gold_points import read_experience, read_projects
 from latex_template import build_latex
-import supabase_client as db
 
 logger = logging.getLogger("resume_generator")
 
@@ -256,40 +255,10 @@ async def generate_resume(
     else:
         ideal_resume, gap_report = bench_outcome
 
-    gap_summary = (gap_report or {}).get("summary") or ats_report.get("gap_analysis_report") or tailored.gap_analysis_report
-    ats_score = ats_report.get("ats_score") or tailored.ats_score
-
-    # Save job + LaTeX to Supabase
-    logger.info("Saving to Supabase...")
-    insert_kwargs = dict(
-        company_name=company_name,
-        position=position,
-        jd_text=jd_text,
-        jd_url=jd_url,
-        jd_analysis=analyzed_jd.model_dump(),
-        tailored_content=tailored.model_dump(),
-        gap_analysis=gap_summary,
-        ats_score=ats_score,
-        tex_content=tex_content,
-        ideal_resume=ideal_resume,
-        gap_report=gap_report if gap_report and "error" not in gap_report else None,
-        model_used="gemini-2.5-flash + gpt-5-mini benchmark",
-        status="not applied",
-    )
-    try:
-        job = await db.insert_job(**insert_kwargs)
-    except db.DatabaseRequestError as e:
-        # ideal_resume / gap_report columns may not exist until the migration runs.
-        if "ideal_resume" not in str(e) and "gap_report" not in str(e):
-            raise
-        logger.warning("Saving without benchmark columns (run the migration in SETUP.md): %s", e)
-        insert_kwargs.pop("ideal_resume")
-        insert_kwargs.pop("gap_report")
-        job = await db.insert_job(**insert_kwargs)
-
+    # Nothing is saved here — the user decides in the UI whether to store the
+    # result (and with which status) once they are happy with the ATS score.
     logger.info(f"Resume generated for {company_name} — {position}")
     return {
-        "job": job,
         "tex_content": tex_content,
         "analyzed_jd": analyzed_jd.model_dump(),
         "tailored_content": tailored.model_dump(),

@@ -139,6 +139,50 @@ async def generate(req: GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Save Generated Resume ─────────────────────────────────────────────────────
+
+class SaveGeneratedRequest(BaseModel):
+    company_name: str
+    position: str
+    jd_text: str = ""
+    jd_url: Optional[str] = None
+    jd_analysis: Optional[dict] = None
+    tailored_content: Optional[dict] = None
+    tex_content: str
+    ats_score: Optional[int] = None
+    gap_analysis: Optional[str] = None
+    ideal_resume: Optional[dict] = None
+    gap_report: Optional[dict] = None
+    status: str = "not applied"
+
+
+@app.post("/api/jobs/save-generated")
+async def save_generated(req: SaveGeneratedRequest):
+    """Persist a generated resume the user has accepted. Called from the Generate
+    page's save buttons — generation itself no longer writes to the database."""
+    if not req.tex_content.strip():
+        raise HTTPException(status_code=400, detail="No resume content to save")
+    if not req.company_name.strip() or not req.position.strip():
+        raise HTTPException(status_code=400, detail="Company name and position are required")
+
+    job = await db.insert_job(
+        company_name=req.company_name,
+        position=req.position,
+        jd_text=req.jd_text,
+        jd_url=req.jd_url,
+        jd_analysis=req.jd_analysis,
+        tailored_content=req.tailored_content,
+        gap_analysis=req.gap_analysis,
+        ats_score=req.ats_score,
+        tex_content=req.tex_content,
+        ideal_resume=req.ideal_resume,
+        gap_report=req.gap_report,
+        model_used="gemini-2.5-flash + gpt-5-mini benchmark",
+        status=req.status,
+    )
+    return {"job": job}
+
+
 # ── Job Applications CRUD ─────────────────────────────────────────────────────
 
 @app.get("/api/jobs")

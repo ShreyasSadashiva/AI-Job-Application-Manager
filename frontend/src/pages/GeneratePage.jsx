@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Zap, Copy, CheckCircle, ExternalLink, FileText, AlertCircle, TrendingUp, GitCompare, User, ChevronDown, ChevronRight, Gauge, ListTree, Calculator } from "lucide-react";
+import { Zap, Copy, CheckCircle, ExternalLink, FileText, AlertCircle, TrendingUp, GitCompare, User, ChevronDown, ChevronRight, Gauge, ListTree, Calculator, Save, Send } from "lucide-react";
 import { api } from "../api";
 import { useToast } from "../context/ToastContext";
 
@@ -9,7 +9,6 @@ const STEPS = [
   { id: "latex", crumb: "Assemble LaTeX", label: "Assembling LaTeX resume..." },
   { id: "benchmark", crumb: "Benchmark", label: "ChatGPT is building the ideal-candidate benchmark..." },
   { id: "compare", crumb: "Compare", label: "Comparing your resume against the benchmark..." },
-  { id: "save", crumb: "Save", label: "Saving to database..." },
 ];
 
 function ProgressView({ currentStep }) {
@@ -178,22 +177,56 @@ function GapReportContent({ gapReport }) {
 
 function ResultSections({ result }) {
   const toast = useToast();
-  const { job, tex_content, tailored_content, gap_report, ideal_resume } = result;
+  const { tex_content, tailored_content, gap_report, ideal_resume, analyzed_jd, request } = result;
   const [atsReport, setAtsReport] = useState(result.ats_report?.ats_score ? result.ats_report : null);
   const [recalcing, setRecalcing] = useState(false);
-  const score = atsReport?.ats_score || tailored_content?.ats_score || job?.ats_score;
+  const [savedJob, setSavedJob] = useState(null);
+  const [saving, setSaving] = useState(null); // "not applied" | "applied" while a save is in flight
+  const score = atsReport?.ats_score || tailored_content?.ats_score;
+  const jdText = request?.jd_text || analyzed_jd?.clean_text || "";
 
   async function recalculateAts() {
-    if (!job?.id) return toast.error("Job was not saved, cannot recalculate");
     setRecalcing(true);
     try {
-      const { ats_report } = await api.recalculateAts(job.id);
-      setAtsReport(ats_report);
-      toast.success(`ATS recalculated: ${ats_report.ats_score}`);
+      if (savedJob?.id) {
+        // Already stored — persist the fresh score on the saved row too.
+        const { ats_report } = await api.recalculateAts(savedJob.id);
+        setAtsReport(ats_report);
+      } else {
+        const report = await api.scoreAts({ resume_tex: tex_content, jd_text: jdText });
+        setAtsReport(report);
+      }
+      toast.success("ATS recalculated");
     } catch (e) {
       toast.error(e.message);
     } finally {
       setRecalcing(false);
+    }
+  }
+
+  async function saveToDb(status) {
+    setSaving(status);
+    try {
+      const { job } = await api.saveGenerated({
+        company_name: request?.company_name || "",
+        position: request?.position || "",
+        jd_text: jdText,
+        jd_url: request?.jd_url || null,
+        jd_analysis: analyzed_jd,
+        tailored_content,
+        tex_content,
+        ats_score: score ?? null,
+        gap_analysis: gap_report?.summary || atsReport?.gap_analysis_report || tailored_content?.gap_analysis_report || null,
+        ideal_resume: ideal_resume || null,
+        gap_report: gap_report && !gap_report.error ? gap_report : null,
+        status,
+      });
+      setSavedJob(job);
+      toast.success(`Saved to tracker as "${status}"`);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSaving(null);
     }
   }
 
@@ -206,8 +239,10 @@ function ResultSections({ result }) {
             <Copy size={14} /> Copy LaTeX
           </button>
         )}
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--success)", display: "flex", alignItems: "center", gap: 4 }}>
-          <CheckCircle size={14} /> Saved to tracker
+        <span style={{ marginLeft: "auto", fontSize: 12, color: savedJob ? "var(--success)" : "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+          {savedJob
+            ? <><CheckCircle size={14} /> Saved to tracker · {savedJob.status}</>
+            : <><AlertCircle size={14} /> Not saved yet</>}
         </span>
       </div>
 
@@ -267,7 +302,7 @@ function ResultSections({ result }) {
           )}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>
-              {tailored_content?.target_title || job?.position}
+              {tailored_content?.target_title || request?.position}
             </div>
             {tailored_content?.summary && (
               <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7 }}>
@@ -314,6 +349,31 @@ function ResultSections({ result }) {
           ))}
         </Accordion>
       )}
+
+      {/* Save to database — nothing is stored until one of these is pressed */}
+      <div className="card">
+        {savedJob ? (
+          <div style={{ fontSize: 12, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
+            <CheckCircle size={14} /> Saved to tracker as "{savedJob.status}". Recalculating ATS now updates the saved row too.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: 12 }}>
+              Happy with the resume and the ATS score? Recalculate as often as you like — nothing is stored until you save.
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-primary" onClick={() => saveToDb("applied")} disabled={saving !== null}>
+                {saving === "applied" ? <span className="spinner" /> : <Send size={14} />}
+                Add to Tracker as Applied
+              </button>
+              <button className="btn btn-secondary" onClick={() => saveToDb("not applied")} disabled={saving !== null}>
+                {saving === "not applied" ? <span className="spinner" style={{ borderTopColor: "var(--red)", borderWidth: 2 }} /> : <Save size={14} />}
+                Save for Later
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -367,8 +427,8 @@ export default function GeneratePage() {
         jd_url: form.jd_url || null,
       });
       clearInterval(stepTimer);
-      setResult(data);
-      toast.success(`Resume generated for ${form.company_name}!`);
+      setResult({ ...data, request: { ...form }, generated_at: Date.now() });
+      toast.success(`Resume generated for ${form.company_name} — review it, then save`);
     } catch (e) {
       clearInterval(stepTimer);
       toast.error(e.message);
@@ -443,7 +503,7 @@ export default function GeneratePage() {
         </div>
 
         {/* Results — under the form */}
-        {result && !loading && <ResultSections key={result.job?.id || "result"} result={result} />}
+        {result && !loading && <ResultSections key={result.generated_at} result={result} />}
 
         {/* Info box — only while idle with no result */}
         {!result && !loading && (
@@ -460,7 +520,7 @@ export default function GeneratePage() {
               3. Generates tailored bullets and assembles the LaTeX resume<br />
               4. ChatGPT builds the ideal candidate's resume from the JD alone<br />
               5. Your resume is compared against it — gaps listed, resume untouched<br />
-              6. Saves everything to your tracker with ATS score
+              6. Review the result, recalculate ATS if you like, then save it yourself
             </div>
           </div>
         )}
