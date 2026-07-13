@@ -35,6 +35,10 @@ create table v2_job_applications (
   ats_score     integer,    -- 0–100
   gap_analysis  text,       -- plain-text gap analysis report
 
+  -- Benchmark comparison (ChatGPT ideal-candidate resume vs the generated resume)
+  ideal_resume  jsonb,      -- fictional ideal-candidate resume built from the JD alone
+  gap_report    jsonb,      -- structured gaps, severities, and skills to work on
+
   -- Tracking
   status        text not null default 'not applied'
                 check (status in (
@@ -72,6 +76,13 @@ for each row execute procedure v2_set_updated_at();
 ```
 
 > No storage bucket is needed. LaTeX is stored as plain text in the `tex_content` column.
+
+**Already created the table before the benchmark-comparison update?** Run this migration once:
+
+```sql
+alter table v2_job_applications add column if not exists ideal_resume jsonb;
+alter table v2_job_applications add column if not exists gap_report jsonb;
+```
 
 ---
 
@@ -118,6 +129,8 @@ Open http://localhost:5175
 | `tex_content` | text | Final LaTeX source — saved when the user applies to the job |
 | `ats_score` | integer | ATS match score 0–100 |
 | `gap_analysis` | text | Plain-text report of missing skills and suggestions |
+| `ideal_resume` | jsonb | ChatGPT's fictional ideal-candidate resume, built from the JD alone |
+| `gap_report` | jsonb | Structured comparison: gaps with severities, matched strengths, skills to work on |
 | `status` | text | One of: not applied / applied / interviewing / offered / rejected / withdrawn |
 | `is_favourite` | boolean | Star/pin a job for quick access |
 | `got_interview` | boolean | Mark when you get an interview |

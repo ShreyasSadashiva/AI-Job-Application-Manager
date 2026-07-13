@@ -47,7 +47,11 @@ export const api = {
 
   // ATS
   scoreAts: (data) => request("/api/ats/score", { method: "POST", body: JSON.stringify(data) }),
+  recalculateAts: (jobId) => request(`/api/jobs/${jobId}/recalculate-ats`, { method: "POST" }),
 
   // JD Analysis
   analyzeJD: (jd_text) => request("/api/analyze/jd", { method: "POST", body: JSON.stringify({ jd_text }) }),
+
+  // Insights
+  getInsights: () => request("/api/insights"),
 };

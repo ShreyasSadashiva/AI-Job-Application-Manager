@@ -64,6 +64,8 @@ async def insert_job(
     gap_analysis: Optional[str] = None,
     ats_score: Optional[int] = None,
     tex_content: Optional[str] = None,
+    ideal_resume: Optional[dict] = None,
+    gap_report: Optional[dict] = None,
     model_used: Optional[str] = None,
     status: str = "applied",
 ) -> dict:
@@ -86,6 +88,10 @@ async def insert_job(
         row["ats_score"] = ats_score
     if tex_content:
         row["tex_content"] = tex_content
+    if ideal_resume:
+        row["ideal_resume"] = ideal_resume
+    if gap_report:
+        row["gap_report"] = gap_report
     if model_used:
         row["model_used"] = model_used
 
@@ -115,23 +121,32 @@ async def get_all_jobs(
     has_resume: Optional[bool] = None,
 ) -> list[dict]:
     client = _get_client()
+    base_columns = (
+        "id, company_name, position, jd_url, ats_score, status, model_used, "
+        "created_at, updated_at, is_favourite, got_interview, "
+        "tex_content, gap_analysis"
+    )
 
-    def _call():
-        q = client.table("v2_job_applications").select(
-            "id, company_name, position, jd_url, ats_score, status, model_used, "
-            "created_at, updated_at, is_favourite, got_interview, "
-            "tex_content, gap_analysis"
-        ).order("created_at", desc=True)
-        if status:
-            q = q.eq("status", status)
-        if has_resume is True:
-            q = q.not_.is_("tex_content", "null")
-        elif has_resume is False:
-            q = q.is_("tex_content", "null")
-        return q.execute()
+    def _make_call(columns):
+        def _call():
+            q = client.table("v2_job_applications").select(columns).order("created_at", desc=True)
+            if status:
+                q = q.eq("status", status)
+            if has_resume is True:
+                q = q.not_.is_("tex_content", "null")
+            elif has_resume is False:
+                q = q.is_("tex_content", "null")
+            return q.execute()
+        return _call
 
     try:
-        result = await _run_sync(_call, "list")
+        result = await _run_sync(_make_call(base_columns + ", gap_report"), "list")
+        return result.data or []
+    except Exception as e:
+        # gap_report column may not exist until the migration in SETUP.md runs.
+        logger.warning(f"get_all_jobs with gap_report failed, retrying without: {e}")
+    try:
+        result = await _run_sync(_make_call(base_columns), "list")
         return result.data or []
     except Exception as e:
         logger.error(f"get_all_jobs: {e}")

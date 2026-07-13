@@ -190,7 +190,99 @@ async def delete_job(job_id: str):
     return {"success": True}
 
 
+# ── Insights ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/insights")
+async def get_insights():
+    """Aggregate job + gap-report data for the Insights page: counts, severity
+    breakdown, most common skills to work on, and applications over time."""
+    jobs = await db.get_all_jobs()
+
+    status_counts: dict[str, int] = {}
+    monthly_applications: dict[str, int] = {}
+    severity_counts = {"critical": 0, "moderate": 0, "minor": 0}
+    skill_counts: dict[str, int] = {}
+    skill_labels: dict[str, str] = {}
+    ats_scores: list[int] = []
+    interviews = 0
+    total_gaps = 0
+    jobs_with_reports = 0
+
+    for job in jobs:
+        job_status = job.get("status") or "unknown"
+        status_counts[job_status] = status_counts.get(job_status, 0) + 1
+
+        if job.get("got_interview"):
+            interviews += 1
+        if isinstance(job.get("ats_score"), int):
+            ats_scores.append(job["ats_score"])
+
+        created = job.get("created_at") or ""
+        if len(created) >= 7:
+            month = created[:7]  # YYYY-MM
+            monthly_applications[month] = monthly_applications.get(month, 0) + 1
+
+        report = job.get("gap_report")
+        if not isinstance(report, dict):
+            continue
+        jobs_with_reports += 1
+
+        for gap in report.get("gaps", []):
+            if not isinstance(gap, dict):
+                continue
+            total_gaps += 1
+            severity = str(gap.get("severity", "moderate")).lower()
+            if severity in severity_counts:
+                severity_counts[severity] += 1
+
+        for skill in report.get("skills_to_work_on", []):
+            name = str(skill).strip()
+            if name:
+                key = name.lower()
+                skill_labels.setdefault(key, name)
+                skill_counts[key] = skill_counts.get(key, 0) + 1
+
+    top_skills = [
+        {"skill": skill_labels[k], "count": v}
+        for k, v in sorted(skill_counts.items(), key=lambda kv: kv[1], reverse=True)[:15]
+    ]
+
+    return {
+        "total_jobs": len(jobs),
+        "status_counts": status_counts,
+        "interviews": interviews,
+        "avg_ats_score": round(sum(ats_scores) / len(ats_scores)) if ats_scores else None,
+        "jobs_with_gap_reports": jobs_with_reports,
+        "total_gaps": total_gaps,
+        "severity_counts": severity_counts,
+        "skills_to_work_on": top_skills,
+        "monthly_applications": [
+            {"month": m, "count": c} for m, c in sorted(monthly_applications.items())
+        ],
+    }
+
+
 # ── ATS Scoring ───────────────────────────────────────────────────────────────
+
+@app.post("/api/jobs/{job_id}/recalculate-ats")
+async def recalculate_ats(job_id: str):
+    """Re-score a saved job's resume against its stored JD using the formula-based
+    ATS rubric (must-haves matched / total) and persist the new score."""
+    job = await db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not (job.get("tex_content") or "").strip():
+        raise HTTPException(status_code=400, detail="This job has no saved resume to score")
+    if not (job.get("jd_text") or "").strip():
+        raise HTTPException(status_code=400, detail="This job has no stored JD text to score against")
+
+    result = await score_ats_standalone(job["tex_content"], job["jd_text"])
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=f"ATS scoring failed: {result['error']}")
+
+    updated = await db.update_job(job_id, {"ats_score": result["ats_score"]})
+    return {"job": updated, "ats_report": result}
+
 
 @app.post("/api/ats/score")
 async def score_ats(req: AtsRequest):

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Trash2, Eye, ExternalLink, Plus, Search, Star,
-  Briefcase, FileText, X, ChevronDown, Copy, RefreshCw,
+  Briefcase, FileText, X, ChevronDown, Copy, RefreshCw, Calculator,
 } from "lucide-react";
 import { api } from "../api";
 import { useToast } from "../context/ToastContext";
@@ -30,13 +30,27 @@ function ModelBadge({ model }) {
 
 // ── Job Detail Modal ─────────────────────────────────────────────────────────
 
-function JobDetailModal({ job, onClose, onUpdate }) {
+function JobDetailModal({ job, onClose, onUpdate, onAtsRecalc }) {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState("overview");
   const [tex, setTex] = useState(job.tex_content || "");
   const [scoring, setScoring] = useState(false);
   const [atsResult, setAtsResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [recalcing, setRecalcing] = useState(false);
+
+  async function recalcAts() {
+    setRecalcing(true);
+    try {
+      const { ats_report } = await api.recalculateAts(job.id);
+      onAtsRecalc(job.id, ats_report.ats_score);
+      toast.success(`ATS recalculated: ${ats_report.ats_score} (${ats_report.must_have_matched}/${ats_report.must_have_total} must-haves)`);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setRecalcing(false);
+    }
+  }
 
   async function scoreAts() {
     if (!tex.trim()) return toast.error("No LaTeX content");
@@ -103,6 +117,16 @@ function JobDetailModal({ job, onClose, onUpdate }) {
                 <div className="stat-value" style={{ fontSize: 32, color: job.ats_score >= 75 ? "var(--success)" : job.ats_score >= 50 ? "var(--warning)" : "var(--red)" }}>
                   {job.ats_score ?? "—"}
                 </div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: 8 }}
+                  onClick={recalcAts}
+                  disabled={recalcing || !job.tex_content || !job.jd_text}
+                  title={!job.tex_content ? "No saved resume to score" : !job.jd_text ? "No stored JD to score against" : "Re-score the saved resume against the stored JD"}
+                >
+                  {recalcing ? <span className="spinner" style={{ borderTopColor: "var(--red)", borderWidth: 2 }} /> : <Calculator size={13} />}
+                  {recalcing ? "Recalculating..." : "Recalculate"}
+                </button>
               </div>
               <div className="card" style={{ padding: 14 }}>
                 <div className="stat-label">Model</div>
@@ -521,6 +545,10 @@ export default function TrackerPage() {
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onUpdate={() => { fetchJobs(); setSelectedJob(null); }}
+          onAtsRecalc={(id, score) => {
+            setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ats_score: score } : j)));
+            setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ats_score: score } : prev));
+          }}
         />
       )}
       {showAddModal && (

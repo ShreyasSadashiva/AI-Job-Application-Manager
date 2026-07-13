@@ -5,6 +5,7 @@ Resume generation pipeline:
   Assemble LaTeX → Compile PDF → Save to Supabase
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -16,12 +17,12 @@ from prompts import (
     MASTER_RESUME_PROMPT,
     ACTION_VERBS,
     ATS_SCORER_PROMPT,
-    RESUME_JUDGE_SYSTEM_PROMPT,
-    RESUME_JUDGE_PROMPT,
-    RESUME_REFINEMENT_PROMPT,
-    RESUME_REFINEMENT_SYSTEM_PROMPT,
+    IDEAL_RESUME_SYSTEM_PROMPT,
+    IDEAL_RESUME_PROMPT,
+    RESUME_GAP_COMPARISON_SYSTEM_PROMPT,
+    RESUME_GAP_COMPARISON_PROMPT,
 )
-from llm_client import call_gemini, call_gemini_text, call_openai_json
+from llm_client import call_gemini, call_openai_json
 from gold_points import read_experience, read_projects
 from latex_template import build_latex
 import supabase_client as db
@@ -141,60 +142,79 @@ async def score_ats_standalone(resume_tex: str, jd_text: str) -> dict:
         return {"ats_score": 0, "error": str(e)}
 
 
-def _normalise_quality_review(review: dict) -> dict:
-    """Keep the judge output predictable for storage, the UI, and Gemini's next pass."""
+_GAP_SEVERITIES = {"critical", "moderate", "minor"}
+
+
+def _normalise_gap_report(report: dict) -> dict:
+    """Keep the comparison output predictable for storage, the UI, and insights."""
     def _score(name: str) -> int:
         try:
-            return max(0, min(100, int(review.get(name, 0))))
+            return max(0, min(100, int(report.get(name, 0))))
         except (TypeError, ValueError):
             return 0
 
     def _items(name: str) -> list[str]:
-        value = review.get(name, [])
+        value = report.get(name, [])
         return [str(item) for item in value] if isinstance(value, list) else []
 
+    gaps = []
+    raw_gaps = report.get("gaps", [])
+    for gap in raw_gaps if isinstance(raw_gaps, list) else []:
+        if not isinstance(gap, dict):
+            continue
+        severity = str(gap.get("severity", "moderate")).lower()
+        gaps.append({
+            "skill": str(gap.get("skill", "")),
+            "severity": severity if severity in _GAP_SEVERITIES else "moderate",
+            "detail": str(gap.get("detail", "")),
+        })
+
     return {
-        "overall_score": _score("overall_score"),
-        "ats_score": _score("ats_score"),
+        "match_score": _score("match_score"),
         "matched_strengths": _items("matched_strengths"),
-        "true_gaps": _items("true_gaps"),
-        "bridged_gaps": _items("bridged_gaps"),
-        "improvement_suggestions": _items("improvement_suggestions"),
-        "gap_analysis_report": str(review.get("gap_analysis_report", "")),
-        "refinement_instructions": str(review.get("refinement_instructions", "")),
+        "gaps": gaps,
+        "skills_to_work_on": _items("skills_to_work_on"),
+        "summary": str(report.get("summary", "")),
     }
 
 
-async def judge_and_refine_resume(jd_text: str, tex_content: str) -> tuple[str, dict]:
-    """Have ChatGPT assess the draft, then let Gemini apply defensible improvements."""
-    logger.info("Quality review: assessing draft with ChatGPT...")
-    raw_review = await call_openai_json(
-        instructions=RESUME_JUDGE_SYSTEM_PROMPT,
-        prompt=RESUME_JUDGE_PROMPT.format(jd_text=jd_text[:6000], tex_content=tex_content),
+async def build_ideal_resume(jd_text: str) -> dict:
+    """Have ChatGPT write the ideal candidate's resume from the JD alone."""
+    logger.info("Benchmark: building ideal-candidate resume with ChatGPT...")
+    ideal = await call_openai_json(
+        instructions=IDEAL_RESUME_SYSTEM_PROMPT,
+        prompt=IDEAL_RESUME_PROMPT.format(jd_text=jd_text[:6000]),
     )
-    if not isinstance(raw_review, dict):
-        raise RuntimeError("ChatGPT quality review did not return a JSON object.")
-    review = _normalise_quality_review(raw_review)
+    if not isinstance(ideal, dict) or not ideal.get("summary"):
+        raise RuntimeError("ChatGPT did not return a usable ideal-candidate resume.")
+    return ideal
 
-    if not review["refinement_instructions"]:
-        raise RuntimeError("ChatGPT quality review returned no refinement instructions.")
 
-    logger.info("Quality review: refining draft with Gemini...")
-    refined_tex = await call_gemini_text(
-        RESUME_REFINEMENT_PROMPT.format(
+async def compare_against_ideal(jd_text: str, ideal_resume: dict, tex_content: str) -> dict:
+    """Have ChatGPT list what the ideal candidate has that this resume lacks."""
+    logger.info("Benchmark: comparing generated resume against the ideal candidate...")
+    raw_report = await call_openai_json(
+        instructions=RESUME_GAP_COMPARISON_SYSTEM_PROMPT,
+        prompt=RESUME_GAP_COMPARISON_PROMPT.format(
             jd_text=jd_text[:6000],
+            ideal_resume=json.dumps(ideal_resume, indent=2),
             tex_content=tex_content,
         ),
-        max_tokens=16384,
-        system_instruction=RESUME_REFINEMENT_SYSTEM_PROMPT.format(
-            refinement_instructions=review["refinement_instructions"],
-        ),
     )
-    refined_tex = re.sub(r"^```(?:latex|tex)?\s*|\s*```$", "", refined_tex.strip()).strip()
-    if "\\begin{document}" not in refined_tex or "\\end{document}" not in refined_tex:
-        raise RuntimeError("Gemini refinement did not return a complete LaTeX document.")
+    if not isinstance(raw_report, dict):
+        raise RuntimeError("ChatGPT gap comparison did not return a JSON object.")
+    return _normalise_gap_report(raw_report)
 
-    return refined_tex, review
+
+async def benchmark_resume_gaps(jd_text: str, tex_content: str) -> tuple[dict, dict]:
+    """Build the ideal-candidate benchmark, then compare the finished resume against it.
+
+    Read-only with respect to the resume: the ideal resume is generated from the JD
+    alone and the comparison never feeds back into the Gemini draft.
+    """
+    ideal_resume = await build_ideal_resume(jd_text)
+    gap_report = await compare_against_ideal(jd_text, ideal_resume, tex_content)
+    return ideal_resume, gap_report
 
 
 async def generate_resume(
@@ -213,28 +233,59 @@ async def generate_resume(
     # Pass 2
     tailored = await generate_content(analyzed_jd)
 
-    # Assemble LaTeX
+    # Assemble LaTeX — this is the final resume; nothing below modifies it.
     logger.info("Assembling LaTeX...")
     tex_content = build_latex(analyzed_jd, tailored)
 
-    # ChatGPT judges the generated draft, then Gemini refines it from that review.
-    tex_content, quality_review = await judge_and_refine_resume(jd_text, tex_content)
+    # Two independent, read-only assessments of the finished resume:
+    #  - formula-based ATS score (must-haves matched / total, same rubric as parent ApplyFlow)
+    #  - ChatGPT ideal-candidate benchmark with gap analysis
+    # Both are advisory: a failure in either must never block the resume itself.
+    ideal_resume: Optional[dict] = None
+    ats_report, bench_outcome = await asyncio.gather(
+        score_ats_standalone(tex_content, jd_text),
+        benchmark_resume_gaps(jd_text, tex_content),
+        return_exceptions=True,
+    )
+    if isinstance(ats_report, BaseException):
+        logger.error(f"ATS scoring failed: {ats_report}")
+        ats_report = {"ats_score": 0, "error": str(ats_report)}
+    if isinstance(bench_outcome, BaseException):
+        logger.error(f"Benchmark comparison failed; continuing without gap report: {bench_outcome}")
+        gap_report: Optional[dict] = {"error": str(bench_outcome)}
+    else:
+        ideal_resume, gap_report = bench_outcome
 
-    # Save job + refined LaTeX to Supabase
+    gap_summary = (gap_report or {}).get("summary") or ats_report.get("gap_analysis_report") or tailored.gap_analysis_report
+    ats_score = ats_report.get("ats_score") or tailored.ats_score
+
+    # Save job + LaTeX to Supabase
     logger.info("Saving to Supabase...")
-    job = await db.insert_job(
+    insert_kwargs = dict(
         company_name=company_name,
         position=position,
         jd_text=jd_text,
         jd_url=jd_url,
         jd_analysis=analyzed_jd.model_dump(),
         tailored_content=tailored.model_dump(),
-        gap_analysis=quality_review["gap_analysis_report"] or tailored.gap_analysis_report,
-        ats_score=quality_review["ats_score"] or tailored.ats_score,
+        gap_analysis=gap_summary,
+        ats_score=ats_score,
         tex_content=tex_content,
-        model_used="gemini-2.5-flash + gpt-5-mini judge",
+        ideal_resume=ideal_resume,
+        gap_report=gap_report if gap_report and "error" not in gap_report else None,
+        model_used="gemini-2.5-flash + gpt-5-mini benchmark",
         status="not applied",
     )
+    try:
+        job = await db.insert_job(**insert_kwargs)
+    except db.DatabaseRequestError as e:
+        # ideal_resume / gap_report columns may not exist until the migration runs.
+        if "ideal_resume" not in str(e) and "gap_report" not in str(e):
+            raise
+        logger.warning("Saving without benchmark columns (run the migration in SETUP.md): %s", e)
+        insert_kwargs.pop("ideal_resume")
+        insert_kwargs.pop("gap_report")
+        job = await db.insert_job(**insert_kwargs)
 
     logger.info(f"Resume generated for {company_name} — {position}")
     return {
@@ -242,5 +293,7 @@ async def generate_resume(
         "tex_content": tex_content,
         "analyzed_jd": analyzed_jd.model_dump(),
         "tailored_content": tailored.model_dump(),
-        "quality_review": quality_review,
+        "ideal_resume": ideal_resume,
+        "gap_report": gap_report,
+        "ats_report": ats_report,
     }

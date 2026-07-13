@@ -206,57 +206,61 @@ Return ONLY valid JSON:
 """
 
 
-RESUME_JUDGE_SYSTEM_PROMPT = """You are the final quality reviewer for a job application resume.
-Assess the generated LaTeX resume strictly against the job description. Be demanding but fair.
+IDEAL_RESUME_SYSTEM_PROMPT = """You are an expert resume writer. Given only a job description, write the resume of a fictional ideal candidate — the person a recruiter would immediately shortlist for interview for this exact role.
 
-Non-negotiable rules:
-- Never recommend adding an unsupported skill, metric, employer, qualification, project, or responsibility.
-- Treat a missing requirement as a true gap when the resume does not substantiate it.
-- Distinguish true gaps from transferable evidence already present in the resume.
-- Focus recommendations on truthful wording, keyword coverage, clarity, relevance, seniority accuracy, and ATS readability.
-- Your refinement instructions will be given directly to another model. Make them precise, prioritised, and safe to apply.
+Rules:
+- Base the candidate purely on the job description; do not reference or imitate any real person.
+- Keep the candidate realistic for the role's seniority: plausible years of experience, employers described by type (e.g. "mid-size fintech"), believable metrics.
+- Cover every must-have requirement in the JD somewhere in the resume.
 - Return only valid JSON, with no Markdown fences.
 """
 
 
-RESUME_JUDGE_PROMPT = """Review this draft resume.
-
-JOB DESCRIPTION:
+IDEAL_RESUME_PROMPT = """JOB DESCRIPTION:
 {jd_text}
 
-DRAFT RESUME (LaTeX):
-{tex_content}
-
-Return exactly this JSON object:
+Write the ideal candidate's resume for this role using exactly this JSON structure (the same section format as our resumes: title, summary, skills, experience, projects, certifications, education):
 {{
-  "overall_score": 0,
-  "ats_score": 0,
-  "matched_strengths": ["specific requirement or strength", "..."],
-  "true_gaps": ["requirement with no defensible evidence", "..."],
-  "bridged_gaps": ["JD requirement -> truthful transferable evidence", "..."],
-  "improvement_suggestions": ["specific, truthful revision", "..."],
-  "gap_analysis_report": "3-5 sentence plain-English assessment of the most important gaps and opportunities.",
-  "refinement_instructions": "A concise, prioritised instruction set for Gemini. Preserve all facts; change only wording, ordering, selection, and emphasis where justified."
+  "candidate_title": "...",
+  "summary": "3-4 line professional summary",
+  "skills_data": {{"Category name": ["skill", "..."]}},
+  "experience": [{{"title": "...", "company": "fictional employer described by type", "duration": "e.g. 2021 - Present", "bullets": ["achievement bullet with a metric", "..."]}}],
+  "projects": [{{"name": "...", "bullets": ["...", "..."]}}],
+  "certifications": ["..."],
+  "education": "degree and field appropriate for the role"
 }}
 """
 
 
-RESUME_REFINEMENT_SYSTEM_PROMPT = r"""You are the final resume editor. Return an improved, compilable LaTeX resume.
+RESUME_GAP_COMPARISON_SYSTEM_PROMPT = """You compare a candidate's real resume against a benchmark resume of the ideal candidate for the same job.
 
-You must follow the independent reviewer's instructions below, but only where they are truthful and supported by the existing draft. Never invent achievements, numbers, skills, employers, projects, dates, qualifications, or responsibilities.
-
-Preserve the LaTeX document structure and all candidate facts. Improve keyword placement, clarity, relevance, ordering, and concise phrasing where the review supports it. Use British English. Return ONLY the complete LaTeX source; do not use Markdown fences or explain your changes.
-
-INDEPENDENT REVIEWER'S INSTRUCTIONS:
-{refinement_instructions}
+Rules:
+- The candidate's resume is final. Never suggest rewording, restructuring, or editing it — identify genuine gaps only.
+- A gap is something the ideal candidate offers that the candidate's resume does not substantiate: a skill, depth of experience, domain exposure, certification, or seniority signal.
+- Classify each gap's severity: "critical" (likely to cost the interview), "moderate" (noticeable weakness), "minor" (nice-to-have).
+- skills_to_work_on must be short, learnable skill names the candidate could realistically develop (e.g. "Kubernetes", "System design at scale"), not vague advice.
+- Also credit genuine strengths where the candidate matches or beats the benchmark.
+- Return only valid JSON, with no Markdown fences.
 """
 
 
-RESUME_REFINEMENT_PROMPT = r"""Revise the current LaTeX resume for this job description according to your system instructions.
-
-JOB DESCRIPTION:
+RESUME_GAP_COMPARISON_PROMPT = """JOB DESCRIPTION:
 {jd_text}
 
-CURRENT LATEX RESUME:
+BENCHMARK — IDEAL CANDIDATE RESUME (JSON):
+{ideal_resume}
+
+CANDIDATE'S ACTUAL RESUME (LaTeX):
 {tex_content}
+
+Return exactly this JSON object:
+{{
+  "match_score": 0,
+  "matched_strengths": ["where the candidate matches or beats the benchmark", "..."],
+  "gaps": [{{"skill": "short label", "severity": "critical|moderate|minor", "detail": "what the ideal candidate has that this resume lacks"}}],
+  "skills_to_work_on": ["skill", "..."],
+  "summary": "4-6 sentence plain-English comparison of this resume against the ideal candidate."
+}}
+
+Where match_score (0-100) is overall closeness to the benchmark.
 """

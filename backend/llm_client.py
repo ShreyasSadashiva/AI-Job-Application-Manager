@@ -141,7 +141,7 @@ async def call_openai_json(
     instructions: str,
     prompt: str,
     model: str = "gpt-5-mini",
-    max_output_tokens: int = 4096,
+    max_output_tokens: int = 16384,
 ) -> Any:
     """Call OpenAI's Responses API and parse the model's JSON review."""
     import asyncio
@@ -152,13 +152,22 @@ async def call_openai_json(
         raise RuntimeError("OPENAI_API_KEY must be set to run the resume quality review.")
 
     def _call():
-        client = OpenAI(api_key=api_key, timeout=45.0, max_retries=1)
+        client = OpenAI(api_key=api_key, timeout=120.0, max_retries=1)
         response = client.responses.create(
             model=model,
             instructions=instructions,
             input=prompt,
             max_output_tokens=max_output_tokens,
+            # gpt-5-mini spends hidden reasoning tokens from the same
+            # max_output_tokens budget; keep effort low so the visible
+            # JSON review is never starved.
+            reasoning={"effort": "low"},
         )
+        if response.status == "incomplete":
+            reason = getattr(response.incomplete_details, "reason", "unknown")
+            raise RuntimeError(f"OpenAI review was cut off ({reason}); no usable output.")
+        if not response.output_text:
+            raise RuntimeError("OpenAI review returned no text output.")
         return response.output_text
 
     loop = asyncio.get_running_loop()
