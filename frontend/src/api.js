@@ -32,6 +32,7 @@ export const api = {
     const q = new URLSearchParams();
     if (params.status) q.set("status", params.status);
     if (params.has_resume !== undefined) q.set("has_resume", params.has_resume);
+    if (params.starred !== undefined) q.set("starred", params.starred);
     return request(`/api/jobs${q.toString() ? "?" + q : ""}`);
   },
   getJob: (id) => request(`/api/jobs/${id}`),
@@ -55,6 +56,20 @@ export const api = {
 
   // Insights
   getInsights: () => request("/api/insights"),
+
+  // Manual Edit helpers
+  getStarredJobs: () => request("/api/jobs?starred=true"),
+  getJobsBatchTex: (ids) => request("/api/jobs/batch-tex", { method: "POST", body: JSON.stringify({ ids }) }),
+  similarJobs: (jd_text, cv_text = "", top_k = 5) => request("/api/jobs/similar", { method: "POST", body: JSON.stringify({ jd_text, cv_text, top_k }) }),
+  analyseCvFit: (data) => request("/api/jobs/analyse-cv-fit", { method: "POST", body: JSON.stringify(data) }),
+  extractKeywords: (jd_text) => request("/api/jobs/extract-keywords", { method: "POST", body: JSON.stringify({ jd_text }) }),
+  parsePdf: async (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/parse-pdf`, { method: "POST", body: form });
+    if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail); }
+    return res.json();
+  },
 
   // Semantic ATS (PDF upload)
   semanticAts: async (file, jobId, jdText) => {

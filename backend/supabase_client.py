@@ -119,6 +119,7 @@ async def get_job(job_id: str) -> Optional[dict]:
 async def get_all_jobs(
     status: Optional[str] = None,
     has_resume: Optional[bool] = None,
+    starred: Optional[bool] = None,
 ) -> list[dict]:
     client = _get_client()
     base_columns = (
@@ -132,6 +133,8 @@ async def get_all_jobs(
             q = client.table("v2_job_applications").select(columns).order("created_at", desc=True)
             if status:
                 q = q.eq("status", status)
+            if starred is True:
+                q = q.eq("is_favourite", True)
             if has_resume is True:
                 q = q.not_.is_("tex_content", "null")
             elif has_resume is False:
@@ -150,6 +153,27 @@ async def get_all_jobs(
         return result.data or []
     except Exception as e:
         logger.error(f"get_all_jobs: {e}")
+        return []
+
+
+async def get_jobs_by_ids(ids: list[str]) -> list[dict]:
+    if not ids:
+        return []
+    client = _get_client()
+
+    def _call():
+        return (
+            client.table("v2_job_applications")
+            .select("id, company_name, position, tex_content, ats_score, is_favourite, created_at")
+            .in_("id", ids)
+            .execute()
+        )
+
+    try:
+        result = await _run_sync(_call, "batch-fetch")
+        return result.data or []
+    except Exception as e:
+        logger.error(f"get_jobs_by_ids: {e}")
         return []
 
 

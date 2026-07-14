@@ -513,7 +513,7 @@ export default function TrackerPage() {
           <table className="table">
             <thead>
               <tr>
-                <th style={{ width: 28 }}></th>
+                <th style={{ width: 36 }} title="Star to use in Manual Edit">☆</th>
                 <th>Company / Role</th>
                 <th>ATS</th>
                 <th>Status</th>
@@ -579,12 +579,17 @@ function JobRow({ job, onDelete, onStatusChange, onStar, onView, deleting }) {
       <td>
         <button
           onClick={() => onStar(job.id, job.is_favourite)}
+          title={job.is_favourite ? "Starred — appears in Manual Edit" : "Star to use as base in Manual Edit"}
           style={{
-            background: "none", border: "none", cursor: "pointer", padding: 2,
-            color: job.is_favourite ? "var(--warning)" : "var(--text-muted)",
+            background: "none", border: "none", cursor: "pointer", padding: 4,
+            borderRadius: 4,
+            color: job.is_favourite ? "var(--warning)" : "var(--border2)",
+            transition: "color 0.15s ease",
           }}
+          onMouseEnter={(e) => { if (!job.is_favourite) e.currentTarget.style.color = "var(--warning)"; }}
+          onMouseLeave={(e) => { if (!job.is_favourite) e.currentTarget.style.color = "var(--border2)"; }}
         >
-          <Star size={14} fill={job.is_favourite ? "currentColor" : "none"} />
+          <Star size={15} fill={job.is_favourite ? "currentColor" : "none"} />
         </button>
       </td>
       <td>

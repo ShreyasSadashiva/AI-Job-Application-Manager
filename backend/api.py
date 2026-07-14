@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger("api")
 
 from resume_generator import generate_resume, score_ats_standalone, analyze_jd
+from llm_client import call_gemini
 import supabase_client as db
 
 app = FastAPI(title="ApplyFlow v2", version="2.0.0")
@@ -192,8 +193,9 @@ async def save_generated(req: SaveGeneratedRequest):
 async def get_jobs(
     status: Optional[str] = None,
     has_resume: Optional[bool] = None,
+    starred: Optional[bool] = None,
 ):
-    jobs = await db.get_all_jobs(status=status, has_resume=has_resume)
+    jobs = await db.get_all_jobs(status=status, has_resume=has_resume, starred=starred)
     return {"jobs": jobs, "total": len(jobs)}
 
 
@@ -235,6 +237,146 @@ async def delete_job(job_id: str):
     if not success:
         raise HTTPException(status_code=500, detail="Delete failed")
     return {"success": True}
+
+
+# ── Manual Edit helpers ───────────────────────────────────────────────────────
+
+class BatchTexRequest(BaseModel):
+    ids: list[str]
+
+class SimilarJobsRequest(BaseModel):
+    jd_text: str
+    cv_text: str = ""
+    top_k: int = 5
+
+class AnalyseCvFitRequest(BaseModel):
+    jd_text: str
+    cv_jobs: list[dict]
+
+class ExtractKeywordsRequest(BaseModel):
+    jd_text: str
+
+
+@app.post("/api/jobs/batch-tex")
+async def batch_tex(req: BatchTexRequest):
+    if not req.ids:
+        return {"jobs": []}
+    jobs = await db.get_jobs_by_ids(req.ids)
+    return {"jobs": [{"id": j["id"], "tex_content": j.get("tex_content", "")} for j in jobs]}
+
+
+@app.post("/api/jobs/similar")
+async def similar_jobs(req: SimilarJobsRequest):
+    """Embed the JD and rank all saved CVs by cosine similarity."""
+    from openai import AsyncOpenAI
+    import re as _re
+
+    def _strip(tex: str) -> str:
+        text = _re.sub(r"\\[a-zA-Z]+\*?(\[.*?\])?(\{.*?\})?", " ", tex or "")
+        return _re.sub(r"\s+", " ", _re.sub(r"[{}\\]", " ", text)).strip()[:6000]
+
+    all_jobs = await db.get_all_jobs(has_resume=True)
+    if not all_jobs:
+        return {"jobs": []}
+
+    oai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    cv_texts = [_strip(j.get("tex_content", "")) for j in all_jobs]
+    texts_to_embed = [req.jd_text[:8000]] + cv_texts
+
+    try:
+        resp = await oai.embeddings.create(model="text-embedding-3-small", input=texts_to_embed)
+        embs = [d.embedding for d in sorted(resp.data, key=lambda x: x.index)]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+
+    query_emb = embs[0]
+    cv_embs = embs[1:]
+
+    scored = []
+    for job, emb in zip(all_jobs, cv_embs):
+        sim = _cosine_similarity(query_emb, emb)
+        scored.append({**job, "similarity": round(sim, 4)})
+
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
+    return {"jobs": scored[: req.top_k]}
+
+
+@app.post("/api/jobs/analyse-cv-fit")
+async def analyse_cv_fit(req: AnalyseCvFitRequest):
+    """Use Gemini to rank a set of CVs for best fit against a JD."""
+    import json as _json
+
+    if not req.cv_jobs:
+        raise HTTPException(status_code=400, detail="No CVs provided")
+
+    summaries = []
+    for i, job in enumerate(req.cv_jobs):
+        tex = (job.get("tex_content") or "")[:1500]
+        summaries.append(f"[{i}] {job.get('company_name')} — {job.get('position')} (ATS {job.get('ats_score', '?')})\n{tex}")
+
+    prompt = f"""You are an expert recruiter helping a candidate choose the best base CV to tailor.
+
+JD:
+{req.jd_text[:3000]}
+
+Candidate's past CVs (numbered by index):
+{"---".join(summaries)}
+
+For each CV recommend one of:
+- "use_as_base": closest match — tailor this one
+- "reference_only": useful for bullet inspiration but not the primary base
+- "skip": not relevant enough
+
+Also list any projects you spotted in the CVs that are relevant to this JD.
+
+Return JSON only, no markdown:
+{{"rankings": [{{"index": 0, "recommendation": "use_as_base", "reason": "short reason", "score": 85}}], "recommended_projects": [{{"name": "project name", "reason": "why relevant"}}]}}"""
+
+    try:
+        raw = await call_gemini(prompt)
+        return raw
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/jobs/extract-keywords")
+async def extract_keywords(req: ExtractKeywordsRequest):
+    """Extract JD keywords into three tiers using Gemini."""
+    if not req.jd_text.strip():
+        raise HTTPException(status_code=400, detail="JD text is required")
+
+    prompt = f"""Extract keywords from this job description into three tiers:
+- tier1: Critical must-have technical skills, tools, frameworks, languages (the things that appear in job title or top requirements)
+- tier2: Nice-to-have skills, methodologies, domain terms, action verbs
+- tier3: Soft skills, general responsibilities, process terms
+
+Return JSON only, no markdown:
+{{"tier1": ["Python", "..."], "tier2": ["FastAPI", "..."], "tier3": ["communication", "..."]}}
+
+JD:
+{req.jd_text[:5000]}"""
+
+    try:
+        raw = await call_gemini(prompt)
+        return raw
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/parse-pdf")
+async def parse_pdf(file: UploadFile = File(...)):
+    """Extract plain text from a PDF resume."""
+    from pypdf import PdfReader
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse PDF: {e}")
+    return {"text": text}
 
 
 # ── Insights ──────────────────────────────────────────────────────────────────

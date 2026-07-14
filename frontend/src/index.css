@@ -175,7 +175,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 .btn-icon { padding: 7px; }
 
 /* ── Table ─────────────────────────────────────────────────── */
-.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: visible; }
+.table thead tr:first-child th:first-child { border-radius: var(--radius) 0 0 0; }
+.table thead tr:first-child th:last-child  { border-radius: 0 var(--radius) 0 0; }
 .table { width: 100%; border-collapse: collapse; }
 .table th {
   text-align: left;
