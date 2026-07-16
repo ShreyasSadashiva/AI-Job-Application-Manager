@@ -131,8 +131,8 @@ Match JD seniority. Candidate has ~4 years — do not claim Staff or Principal.
 - Each bullet: named deliverable + tool/concept + metric + outcome
 
 **STEP 5 — PROJECT SELECTION**
-- Only include projects if they fill a specific JD gap not covered by professional work
-- If professional experience already covers the JD, skip projects or include max 2
+- Act as the hiring manager: which projects make this candidate most worth calling back for THIS role?
+- Include only projects that directly signal relevant expertise or close a gap the JD cares about — quality over quantity; maximum 3
 - 2--4 bullets per project using WHAT + METRIC + OUTCOME
 - Extract demo_url, github_url from narratives if present
 
