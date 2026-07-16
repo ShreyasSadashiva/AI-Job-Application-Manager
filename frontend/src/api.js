@@ -77,7 +77,7 @@ export const api = {
     form.append("file", file);
     if (jobId) form.append("job_id", jobId);
     if (jdText) form.append("jd_text", jdText);
-    const res = await fetch("/api/ats/semantic", { method: "POST", body: form });
+    const res = await fetch(`${BASE}/api/ats/semantic`, { method: "POST", body: form });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || `HTTP ${res.status}`);
