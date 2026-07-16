@@ -165,7 +165,7 @@ function KeywordGap({ keywords, missingKeywords }) {
 
 // ── Build Prompt Button ───────────────────────────────────────────────────────
 
-function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult, similarJobs, selectedCvIds, cvRankings, recommendedProjects, onLoadBase, missingKeywords, disabled: externalDisabled }) {
+function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult, similarJobs, starredJobs, selectedCvIds, cvRankings, recommendedProjects, onLoadBase, missingKeywords, disabled: externalDisabled }) {
   const toast = useToast();
   const [building, setBuilding] = useState(false);
   const [buildStatus, setBuildStatus] = useState("");
@@ -174,8 +174,14 @@ function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult,
   const [copied, setCopied] = useState(false);
 
   function getTargetJobs() {
-    if (selectedCvIds?.size > 0)
-      return similarJobs.map((j, i) => ({ ...j, _idx: i })).filter((j) => selectedCvIds.has(j.id));
+    if (selectedCvIds?.size > 0) {
+      const fromSimilar = similarJobs.map((j, i) => ({ ...j, _idx: i })).filter((j) => selectedCvIds.has(j.id));
+      const similarIds = new Set(fromSimilar.map((j) => j.id));
+      const fromStarred = (starredJobs || [])
+        .filter((j) => selectedCvIds.has(j.id) && !similarIds.has(j.id))
+        .map((j) => ({ ...j, _idx: -1 }));
+      return [...fromSimilar, ...fromStarred];
+    }
     return similarJobs.slice(0, 3).map((j, i) => ({ ...j, _idx: i }));
   }
 
@@ -357,7 +363,7 @@ function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult,
 
 // ── CV Picker ─────────────────────────────────────────────────────────────────
 
-function CvPicker({ onLoad, loadedJobId, targetJd, tex, selectedCvIds, onToggleSelect, onSimilarLoaded, cvRankings, onAnalyseFit, analysingFit }) {
+function CvPicker({ onLoad, loadedJobId, targetJd, tex, selectedCvIds, onToggleSelect, onSimilarLoaded, onStarredLoaded, cvRankings, onAnalyseFit, analysingFit }) {
   const toast = useToast();
   const [tab, setTab] = useState("starred");
   const [starredJobs, setStarredJobs] = useState([]);
@@ -371,6 +377,7 @@ function CvPicker({ onLoad, loadedJobId, targetJd, tex, selectedCvIds, onToggleS
     try {
       const { jobs } = await api.getStarredJobs();
       setStarredJobs(jobs || []);
+      onStarredLoaded?.(jobs || []);
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -544,6 +551,7 @@ export default function ManualEditPage() {
   const [loadedJobId, setLoadedJobId] = useState(null);
 
   // CV picker state
+  const [starredJobs, setStarredJobs] = useState([]);
   const [similarJobs, setSimilarJobs] = useState([]);
   const [selectedCvIds, setSelectedCvIds] = useState(new Set());
   const [cvRankings, setCvRankings] = useState({});
@@ -718,7 +726,7 @@ export default function ManualEditPage() {
   function reset() {
     setTargetCompany(""); setTargetPosition(""); setTargetJd(""); setJdUrl("");
     setTex(""); setLoadedJobId(null); setSource("load");
-    setSimilarJobs([]); setSelectedCvIds(new Set()); setCvRankings({}); setRecommendedProjects(null);
+    setStarredJobs([]); setSimilarJobs([]); setSelectedCvIds(new Set()); setCvRankings({}); setRecommendedProjects(null);
     setKeywords(null); setMissingKeywords([]); setAtsResult(null); setJobId(null); setJdAnalysis(null);
   }
 
@@ -857,6 +865,7 @@ export default function ManualEditPage() {
                 selectedCvIds={selectedCvIds}
                 onToggleSelect={toggleCvSelection}
                 onSimilarLoaded={(jobs) => setSimilarJobs(jobs)}
+                onStarredLoaded={(jobs) => setStarredJobs(jobs)}
                 cvRankings={cvRankings}
                 onAnalyseFit={handleAnalyseFit}
                 analysingFit={analysingFit}
@@ -900,6 +909,7 @@ export default function ManualEditPage() {
               targetJd={targetJd}
               atsResult={atsResult}
               similarJobs={similarJobs}
+              starredJobs={starredJobs}
               selectedCvIds={selectedCvIds}
               cvRankings={cvRankings}
               recommendedProjects={recommendedProjects}
