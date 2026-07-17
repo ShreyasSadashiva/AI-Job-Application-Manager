@@ -165,7 +165,7 @@ function KeywordGap({ keywords, missingKeywords }) {
 
 // ── Build Prompt Button ───────────────────────────────────────────────────────
 
-function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult, similarJobs, starredJobs, selectedCvIds, cvRankings, recommendedProjects, onLoadBase, missingKeywords, disabled: externalDisabled }) {
+function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult, similarJobs, starredJobs, selectedCvIds, cvRankings, recommendedProjects, onLoadBase, missingKeywords, directTex, disabled: externalDisabled }) {
   const toast = useToast();
   const [building, setBuilding] = useState(false);
   const [buildStatus, setBuildStatus] = useState("");
@@ -287,12 +287,23 @@ function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult,
   async function handleBuild(strict = false) {
     setBuilding(true);
     try {
-      const targets = getTargetJobs();
-      if (!targets.length) { toast.error("No CVs selected — load starred CVs or run a similarity search first"); return; }
+      let targets = getTargetJobs();
+      if (!targets.length) {
+        if (directTex?.trim()) {
+          targets = [{ id: null, company_name: targetCompany || "Base CV", position: targetPosition || "", tex_content: directTex, _idx: -1 }];
+        } else {
+          toast.error("No CVs selected — load starred CVs or run a similarity search first");
+          return;
+        }
+      }
       setBuildStatus(`Fetching ${targets.length} CV(s)…`);
-      const { jobs: texRows } = await api.getJobsBatchTex(targets.map((j) => j.id));
-      const texMap = Object.fromEntries((texRows || []).map((r) => [r.id, r.tex_content]));
-      const enriched = targets.map((job) => ({ ...job, tex_content: texMap[job.id] || "" }));
+      const dbTargets = targets.filter((j) => j.id);
+      let texMap = {};
+      if (dbTargets.length) {
+        const { jobs: texRows } = await api.getJobsBatchTex(dbTargets.map((j) => j.id));
+        texMap = Object.fromEntries((texRows || []).map((r) => [r.id, r.tex_content]));
+      }
+      const enriched = targets.map((job) => ({ ...job, tex_content: job.id ? (texMap[job.id] || "") : (job.tex_content || "") }));
       setBuildStatus("Building…");
       const prompt = strict ? buildStrictPrompt(enriched) : buildPrompt(enriched);
       setPromptText(prompt);
@@ -915,6 +926,7 @@ export default function ManualEditPage() {
               recommendedProjects={recommendedProjects}
               onLoadBase={loadJob}
               missingKeywords={missingKeywords}
+              directTex={tex}
               disabled={!targetJd.trim()}
             />
           </div>
