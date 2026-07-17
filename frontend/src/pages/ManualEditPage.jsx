@@ -9,6 +9,137 @@ import { useToast } from "../context/ToastContext";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const LATEX_TEMPLATE = String.raw`\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,filecolor=blue,urlcolor=blue,citecolor=blue}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{geometry}
+
+\geometry{margin=0.4in}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\titleformat{\section}{\vspace{-6pt}\scshape\raggedright\large}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\newcommand{\resumeItem}[1]{\item\small{#1 \vspace{-2pt}}}
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-1pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-5pt}
+}
+\newcommand{\resumeProject}[1]{\vspace{-1pt}\item\small{#1}\vspace{-5pt}}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+\newcommand{\resumeSpace}{\vspace{6pt}}
+
+\begin{document}
+
+% ── HEADER ───────────────────────────────────────────────────────────────────
+\begin{center}
+    \textbf{\Huge \scshape Shreyas Achary} \\ \vspace{2pt}
+    \small +353.089.977.4573 $|$
+    \href{mailto:shreyasacharya8@gmail.com}{shreyasacharya8@gmail.com} $|$
+    \href{https://linkedin.com/in/shreyas-achary}{linkedin.com/in/shreyas-achary} $|$
+    \href{https://portfolio-three-rho-41.vercel.app/}{Portfolio}
+\end{center}
+
+% ── PROFESSIONAL SUMMARY ─────────────────────────────────────────────────────
+\section{Professional Summary}
+<40--55 word summary here>
+
+% ── TECHNICAL SKILLS ─────────────────────────────────────────────────────────
+\section{Technical Skills}
+\begin{itemize}[leftmargin=0.15in, label={}]
+  \small{\item{
+    \textbf{Languages}: Python, SQL, ... \\
+    \textbf{Frameworks \& Libraries}: ... \\
+    \textbf{Cloud \& DevOps}: ... \\
+    \textbf{Tools \& Platforms}: ... \\
+    \textbf{Databases}: ... \\
+    \textbf{Concepts}: ...
+  }}
+\end{itemize}
+
+% ── EXPERIENCE ───────────────────────────────────────────────────────────────
+\section{Experience}
+\resumeSubHeadingListStart
+
+  \resumeSubheading
+    {<Job Title>}{<Start> -- <End>}
+    {<Company>}{<Location>}
+    \resumeItemListStart
+      \resumeItem{Bullet one.}
+      \resumeItem{Bullet two.}
+    \resumeItemListEnd
+    \resumeSpace
+
+  \resumeSubheading
+    {<Job Title>}{<Start> -- <End>}
+    {<Company>}{<Location>}
+    \resumeItemListStart
+      \resumeItem{Bullet one.}
+      \resumeItem{Bullet two.}
+    \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+% ── PROJECTS ─────────────────────────────────────────────────────────────────
+\section{Projects}
+\resumeSubHeadingListStart
+
+  \resumeProject{\textbf{Project Name} $|$ \href{https://demo.url}{Demo} $|$ \href{https://github.url}{GitHub}}
+  \resumeItemListStart
+    \resumeItem{Bullet one.}
+    \resumeItem{Bullet two.}
+  \resumeItemListEnd
+  \resumeSpace
+
+  \resumeProject{\textbf{Project Name}}
+  \resumeItemListStart
+    \resumeItem{Bullet one.}
+  \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+% ── EDUCATION ────────────────────────────────────────────────────────────────
+\section{Education}
+\resumeSubHeadingListStart
+  \resumeSubheading
+    {University College Dublin}{Sep 2024 -- Sep 2025}
+    {MSc in Data and Computational Science $|$ GPA: 2:1}{Dublin, Ireland}
+    \resumeItemListStart
+      \resumeItem{Relevant Modules: Statistical Machine Learning \& AI, Modern Regression Analysis, Multivariate Analysis.}
+    \resumeItemListEnd
+  \resumeSubheading
+    {NMAM Institute of Technology}{Aug 2017 -- Jul 2021}
+    {Bachelor of Engineering in Electronics and Communication Engineering}{Karnataka, India}
+\resumeSubHeadingListEnd
+
+\end{document}`;
+
+
 const CANDIDATE_CONTEXT = `## Candidate Experience Index
 
 This is a navigation index only — use it to understand what experience exists and where to find the relevant facts. Do NOT write bullets from this index. For each section you decide to include, refer to the detailed facts in the source documents provided above.
@@ -210,14 +341,25 @@ function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult,
       lines.push("");
     }
 
+    const hasPlainText = enrichedJobs.some((j) => !j.id);
+
     lines.push(`## Base CV(s) — work ONLY from these`);
     enrichedJobs.forEach((job) => {
       const rank = cvRankings?.[job._idx];
       const tag = rank ? ` [${rank.recommendation}]` : "";
       lines.push(`### ${job.company_name} — ${job.position}${tag}`);
       if (rank?.reason) lines.push(`*${rank.reason}*`);
-      if (job.tex_content) lines.push(`\`\`\`latex\n${job.tex_content}\n\`\`\``);
+      if (job.tex_content) {
+        const fence = job.id ? "latex" : "text";
+        lines.push(`\`\`\`${fence}\n${job.tex_content}\n\`\`\``);
+      }
     });
+
+    if (hasPlainText) {
+      lines.push(`\n## LaTeX Template — output MUST match this structure exactly`);
+      lines.push(`The base CV above is plain text extracted from a PDF. Reconstruct it as a full LaTeX CV using ONLY the template below. Do not deviate from the custom commands, section order, or formatting.`);
+      lines.push(`\`\`\`latex\n${LATEX_TEMPLATE}\n\`\`\``);
+    }
 
     lines.push(`\n## Power Verbs\n${POWER_VERBS}\n`);
     lines.push(`\n${CANDIDATE_CONTEXT}`);
@@ -260,11 +402,22 @@ function BuildPromptButton({ targetCompany, targetPosition, targetJd, atsResult,
       lines.push("");
     }
 
+    const hasPlainText = enrichedJobs.some((j) => !j.id);
+
     lines.push(`## Base CV(s) — ONLY rewrite what is already here`);
     enrichedJobs.forEach((job) => {
       lines.push(`### ${job.company_name} — ${job.position}`);
-      if (job.tex_content) lines.push(`\`\`\`latex\n${job.tex_content}\n\`\`\``);
+      if (job.tex_content) {
+        const fence = job.id ? "latex" : "text";
+        lines.push(`\`\`\`${fence}\n${job.tex_content}\n\`\`\``);
+      }
     });
+
+    if (hasPlainText) {
+      lines.push(`\n## LaTeX Template — output MUST match this structure exactly`);
+      lines.push(`The base CV above is plain text extracted from a PDF. Reconstruct it as a full LaTeX CV using ONLY the template below. Do not deviate from the custom commands, section order, or formatting.`);
+      lines.push(`\`\`\`latex\n${LATEX_TEMPLATE}\n\`\`\``);
+    }
 
     lines.push(`\n## Power Verbs\n${POWER_VERBS}\n`);
 
