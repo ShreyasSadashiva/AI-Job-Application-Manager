@@ -737,6 +737,10 @@ export default function ManualEditPage() {
   const [atsResult, setAtsResult] = useState(null);
   const [jobId, setJobId] = useState(null);
 
+  // Tracker job context (set when a saved job is loaded or selected)
+  const [trackerJobId, setTrackerJobId] = useState(null);
+  const [originalTex, setOriginalTex] = useState("");
+
   // Loading
   const [scoring, setScoring] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -802,7 +806,10 @@ export default function ManualEditPage() {
     try {
       const full = await api.getJob(jobId);
       setLoadedJobId(full.id);
-      setTex(full.tex_content || "");
+      setTrackerJobId(full.id);
+      const loadedTex = full.tex_content || "";
+      setTex(loadedTex);
+      setOriginalTex(loadedTex);
       if (!targetCompany) setTargetCompany(full.company_name || "");
       if (!targetPosition) setTargetPosition(full.position || "");
       if (!targetJd) setTargetJd(full.jd_text || "");
@@ -859,9 +866,18 @@ export default function ManualEditPage() {
     if (!tex.trim()) return toast.error("No resume content to save");
     setSaving(true);
     try {
+      const texChanged = tex.trim() !== originalTex.trim();
+      const hasLatex = tex.includes("\\documentclass") || tex.includes("\\begin{document}");
+      const atsUpdated = !!atsResult;
+      const shouldUpdateTracker = trackerJobId && ((texChanged && hasLatex) || atsUpdated);
+
       if (jobId) {
         await api.updateJob(jobId, { tex_content: tex, status, ats_score: atsResult?.ats_score });
         toast.success("Updated");
+      } else if (shouldUpdateTracker) {
+        await api.updateJob(trackerJobId, { tex_content: tex, status, ats_score: atsResult?.ats_score });
+        setOriginalTex(tex);
+        toast.success("Tracker job updated");
       } else {
         const { job } = await api.saveResume({
           company_name: targetCompany,
@@ -892,6 +908,7 @@ export default function ManualEditPage() {
     setTex(""); setLoadedJobId(null); setSource("load");
     setStarredJobs([]); setSimilarJobs([]); setSelectedCvIds(new Set()); setCvRankings({}); setRecommendedProjects(null);
     setKeywords(null); setMissingKeywords([]); setAtsResult(null); setJobId(null); setJdAnalysis(null);
+    setTrackerJobId(null); setOriginalTex("");
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -933,6 +950,8 @@ export default function ManualEditPage() {
                         if (full.position) setTargetPosition(full.position);
                         if (full.jd_text) setTargetJd(full.jd_text);
                         if (full.jd_url) setJdUrl(full.jd_url);
+                        setTrackerJobId(id);
+                        setOriginalTex(full.tex_content || "");
                       } catch (e) { toast.error(e.message); }
                     }}
                   >
