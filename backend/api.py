@@ -51,6 +51,7 @@ class GenerateRequest(BaseModel):
     position: str
     jd_text: str
     jd_url: Optional[str] = None
+    candidate_voice: str = ""
 
 
 class ManualJobRequest(BaseModel):
@@ -134,6 +135,7 @@ async def generate(req: GenerateRequest):
             position=req.position,
             jd_text=req.jd_text,
             jd_url=req.jd_url,
+            candidate_voice=req.candidate_voice,
         )
         return result
     except db.DatabaseRequestError:

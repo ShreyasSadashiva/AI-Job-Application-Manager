@@ -14,7 +14,9 @@ from typing import Optional
 from models import AnalyzedJD, TailoredContent, Requirement
 from prompts import (
     JD_ANALYZER_PROMPT,
+    VOICE_ANALYZER_PROMPT,
     MASTER_RESUME_PROMPT,
+    CRITIQUE_REWRITE_PROMPT,
     ACTION_VERBS,
     ATS_SCORER_PROMPT,
     IDEAL_RESUME_SYSTEM_PROMPT,
@@ -71,7 +73,29 @@ async def analyze_jd(jd_text: str) -> AnalyzedJD:
     )
 
 
-async def generate_content(analyzed_jd: AnalyzedJD) -> TailoredContent:
+def _default_voice_profile() -> dict:
+    return {
+        "roles": {},
+        "overall_narrative": "A professional with extensive experience in data science, risk, and AI.",
+        "strongest_achievement": "Demonstrated impact across multiple roles in regulated environments.",
+    }
+
+
+async def analyze_voice(candidate_voice: str) -> dict:
+    """Pass 0: Extract signals about ownership, confidence, and significance."""
+    if not candidate_voice.strip():
+        return _default_voice_profile()
+    logger.info("Pass 0: Analyzing candidate voice...")
+    try:
+        return await call_gemini(
+            VOICE_ANALYZER_PROMPT.format(candidate_voice=candidate_voice)
+        )
+    except Exception as exc:
+        logger.error("Voice analysis failed; using the parent fallback profile: %s", exc)
+        return _default_voice_profile()
+
+
+async def generate_content(analyzed_jd: AnalyzedJD, voice_profile: dict) -> TailoredContent:
     """Pass 2: Generate tailored resume content using gold points."""
     experience_text = read_experience()
     project_text = read_projects()
@@ -80,8 +104,9 @@ async def generate_content(analyzed_jd: AnalyzedJD) -> TailoredContent:
 
     prompt = MASTER_RESUME_PROMPT.format(
         jd_analysis=jd_analysis_str,
-        experience_text=experience_text[:8000],
-        project_text=project_text[:4000],
+        experience_text=experience_text,
+        project_text=project_text,
+        voice_profile=json.dumps(voice_profile, indent=2),
         action_verbs=ACTION_VERBS,
     )
 
@@ -95,6 +120,7 @@ async def generate_content(analyzed_jd: AnalyzedJD) -> TailoredContent:
             projects.append({
                 "name": p.get("name", ""),
                 "demo_url": p.get("demo_url"),
+                "report_url": p.get("report_url"),
                 "github_url": p.get("github_url"),
                 "bullets": p.get("bullets", []),
                 "reasoning": p.get("reasoning", ""),
@@ -114,6 +140,59 @@ async def generate_content(analyzed_jd: AnalyzedJD) -> TailoredContent:
         ats_score=raw.get("ats_score"),
         validation_checks=raw.get("validation_checks"),
     )
+
+
+async def critique_rewrite(
+    tailored: TailoredContent,
+    analyzed_jd: AnalyzedJD,
+    voice_profile: dict,
+) -> TailoredContent:
+    """Pass 3: Review all bullets and replace only those rated weak."""
+    bullets_to_review = {
+        "tepiche": tailored.tepiche_bullets,
+        "ltimindtree": tailored.ltimindtree_bullets,
+        "projects": [
+            {"project_name": p.get("name"), "bullets": p.get("bullets", [])}
+            for p in tailored.selected_projects
+        ],
+    }
+    prompt = CRITIQUE_REWRITE_PROMPT.format(
+        bullets_json=json.dumps(bullets_to_review, indent=2),
+        jd_analysis=json.dumps(analyzed_jd.model_dump(), indent=2),
+        voice_profile=json.dumps(voice_profile, indent=2),
+    )
+    logger.info("Pass 3: Critiquing and selectively rewriting bullets...")
+    try:
+        review = await call_gemini(prompt)
+    except Exception as exc:
+        logger.error("Critique pass failed; retaining original bullets: %s", exc)
+        return tailored
+
+    def merge_role(role_key: str, bullets: list[str]) -> list[str]:
+        rewrites = {
+            item.get("original", "").strip(): item.get("rewritten")
+            for item in review.get("reviewed_bullets", {}).get(role_key, [])
+            if item.get("rating") == "WEAK" and item.get("rewritten")
+        }
+        return [rewrites.get(bullet.strip(), bullet) for bullet in bullets]
+
+    tailored.tepiche_bullets = merge_role("tepiche", tailored.tepiche_bullets)
+    tailored.ltimindtree_bullets = merge_role("ltimindtree", tailored.ltimindtree_bullets)
+
+    project_rewrites = {}
+    for project in review.get("projects", []):
+        project_rewrites[project.get("project_name")] = {
+            item.get("original", "").strip(): item.get("rewritten")
+            for item in project.get("bullets", [])
+            if item.get("rating") == "WEAK" and item.get("rewritten")
+        }
+    for project in tailored.selected_projects:
+        rewrites = project_rewrites.get(project.get("name"), {})
+        project["bullets"] = [
+            rewrites.get(bullet.strip(), bullet)
+            for bullet in project.get("bullets", [])
+        ]
+    return tailored
 
 
 async def score_ats_standalone(resume_tex: str, jd_text: str) -> dict:
@@ -221,16 +300,23 @@ async def generate_resume(
     position: str,
     jd_text: str,
     jd_url: Optional[str] = None,
+    candidate_voice: str = "",
 ) -> dict:
     """
     Full pipeline: JD analysis → content generation → LaTeX assembly → DB save.
     Returns LaTeX as text; no PDF compilation.
     """
-    # Pass 1
-    analyzed_jd = await analyze_jd(jd_text)
+    # Pass 0 and Pass 1 are independent.
+    voice_profile, analyzed_jd = await asyncio.gather(
+        analyze_voice(candidate_voice),
+        analyze_jd(jd_text),
+    )
 
     # Pass 2
-    tailored = await generate_content(analyzed_jd)
+    tailored = await generate_content(analyzed_jd, voice_profile)
+
+    # Pass 3
+    tailored = await critique_rewrite(tailored, analyzed_jd, voice_profile)
 
     # Assemble LaTeX — this is the final resume; nothing below modifies it.
     logger.info("Assembling LaTeX...")

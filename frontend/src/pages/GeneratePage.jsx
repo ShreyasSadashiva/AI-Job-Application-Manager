@@ -4,8 +4,10 @@ import { api } from "../api";
 import { useToast } from "../context/ToastContext";
 
 const STEPS = [
+  { id: "voice", crumb: "Analyse voice", label: "Analysing candidate voice..." },
   { id: "jd", crumb: "Analyse JD", label: "Analysing job description..." },
   { id: "content", crumb: "Tailor content", label: "Generating tailored bullets from gold points..." },
+  { id: "critique", crumb: "Critique", label: "Critiquing and rewriting weak bullets..." },
   { id: "latex", crumb: "Assemble LaTeX", label: "Assembling LaTeX resume..." },
   { id: "benchmark", crumb: "Benchmark", label: "ChatGPT is building the ideal-candidate benchmark..." },
   { id: "compare", crumb: "Compare", label: "Comparing your resume against the benchmark..." },
@@ -380,7 +382,7 @@ function ResultSections({ result }) {
 
 export default function GeneratePage() {
   const toast = useToast();
-  const [form, setForm] = useState({ company_name: "", position: "", jd_text: "", jd_url: "" });
+  const [form, setForm] = useState({ company_name: "", position: "", jd_text: "", jd_url: "", candidate_voice: "" });
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
   const [result, setResult] = useState(null);
@@ -425,6 +427,7 @@ export default function GeneratePage() {
         position: form.position,
         jd_text: form.jd_text,
         jd_url: form.jd_url || null,
+        candidate_voice: form.candidate_voice,
       });
       clearInterval(stepTimer);
       setResult({ ...data, request: { ...form }, generated_at: Date.now() });
@@ -495,6 +498,18 @@ export default function GeneratePage() {
               />
             </div>
 
+            <div className="form-group">
+              <label className="form-label">Voice & Narrative (Optional)</label>
+              <textarea
+                className="textarea"
+                rows={5}
+                value={form.candidate_voice}
+                onChange={(e) => set("candidate_voice", e.target.value)}
+                placeholder="e.g. 'I'm a senior data scientist who focuses on risk. I'm proud of my work at UnitMode where I saved $10M using XGBoost. I like to sound confident and technical.'"
+                disabled={loading}
+              />
+            </div>
+
             <button className="btn btn-primary btn-lg w-full" onClick={generate} disabled={loading}>
               {loading ? <span className="spinner" /> : <Zap size={16} />}
               {loading ? "Generating..." : "Generate Resume"}
@@ -515,12 +530,13 @@ export default function GeneratePage() {
           }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--red)", marginBottom: 6 }}>How it works</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.8 }}>
-              1. Gemini analyses the JD for must-have skills and keywords<br />
+              1. Gemini analyses your candidate voice and the JD<br />
               2. Reads your gold points (professional experience + projects)<br />
-              3. Generates tailored bullets and assembles the LaTeX resume<br />
-              4. ChatGPT builds the ideal candidate's resume from the JD alone<br />
-              5. Your resume is compared against it — gaps listed, resume untouched<br />
-              6. Review the result, recalculate ATS if you like, then save it yourself
+              3. Generates tailored bullets, then critiques and rewrites only weak bullets<br />
+              4. Assembles the LaTeX resume<br />
+              5. ChatGPT builds the ideal candidate's resume from the JD alone<br />
+              6. Your resume is compared against it — gaps listed, resume untouched<br />
+              7. Review the result, recalculate ATS if you like, then save it yourself
             </div>
           </div>
         )}
